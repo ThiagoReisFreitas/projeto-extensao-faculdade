@@ -1,6 +1,6 @@
 # Sistema de Controle Financeiro — O Pensador (PEX)
 
-Controle financeiro para restaurante (self-service + churrascaria). Node/Express + Postgres + React, tudo em Docker. Ver `CLAUDE.md` e `requisitos-sistema-financeiro-o-pensador.md`.
+Controle financeiro para restaurante (self-service + churrascaria). Node/Express + Postgres + React, tudo em Docker. Ver `requisitos-sistema-financeiro-o-pensador.md`.
 
 ## Subir
 

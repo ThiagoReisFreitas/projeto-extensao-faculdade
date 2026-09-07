@@ -12,3 +12,6 @@ web/dist/
 .claude/
 .mcp.json
 CLAUDE.local.md
+
+# Instruções do projeto para o Claude (manter local, fora do versionamento)
+CLAUDE.md
