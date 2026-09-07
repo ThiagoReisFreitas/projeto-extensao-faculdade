@@ -1,0 +1,49 @@
+# EXEMPLO de nginx com TLS. Copiar por cima de proxy/nginx.conf na VPS/LAN
+# e montar os certificados. Nao usado pelo compose padrao (que so escuta :80 em 127.0.0.1).
+#
+# LAN / piloto: cert self-signed
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+#     -keyout proxy/tls/key.pem -out proxy/tls/cert.pem -subj "/CN=pensador.local"
+# VPS: usar certbot / Let's Encrypt e apontar ssl_certificate p/ /etc/letsencrypt/live/DOMINIO/
+
+server_tokens off;
+limit_req_zone $binary_remote_addr zone=login:10m rate=20r/m;
+
+server {
+  listen 80;
+  server_name _;
+  return 301 https://$host$request_uri;   # forca HTTPS
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+  server_name pensador.local;   # trocar pelo dominio real na VPS
+
+  ssl_certificate     /etc/nginx/tls/cert.pem;
+  ssl_certificate_key /etc/nginx/tls/key.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers HIGH:!aNULL:!MD5;
+
+  client_max_body_size 5m;
+  add_header Strict-Transport-Security "max-age=31536000" always;
+
+  location = /api/auth/login {
+    limit_req zone=login burst=10 nodelay;
+    proxy_pass http://api:3000/auth/login;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+  location /api/ {
+    proxy_pass http://api:3000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+  location / {
+    proxy_pass http://web:80/;
+  }
+}

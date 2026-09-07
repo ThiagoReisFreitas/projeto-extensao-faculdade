@@ -1,0 +1,9 @@
+# Instalar:  crontab -e   (e colar as linhas abaixo, ajustando o caminho do repo)
+REPO=/home/USUARIO/Documentos/projeto-extensao-faculdade
+
+# backup diario as 3h da manha (o script le o .env sozinho)
+0 3 * * *  cd $REPO && sh ops/backup.sh >> $REPO/backups/backup.log 2>&1
+
+# healthcheck a cada 5 min. NAO ponha TELEGRAM_TOKEN aqui (fica visivel em `crontab -l`):
+# o script carrega o .env; basta ter TELEGRAM_TOKEN/TELEGRAM_CHAT la.
+*/5 * * * *  cd $REPO && sh ops/healthcheck.sh >> /tmp/pensador-health.log 2>&1

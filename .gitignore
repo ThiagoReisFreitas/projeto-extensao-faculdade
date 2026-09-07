@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+backups/
+*.log
+api/uploads/
+web/dist/
+
+# Claude Code (arquivos de apoio locais, não fazem parte do produto)
+.claude/
+.mcp.json
+CLAUDE.local.md
