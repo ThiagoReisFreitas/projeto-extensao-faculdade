@@ -1,0 +1,6 @@
+Data;Valor;Categoria;Descricao
+01/09/2026;50,00;Insumos;essa linha estaria ok
+31/02/2026;20,00;Insumos;data que nao existe
+02/09/2026;-9,90;Energia;valor negativo
+03/09/2026;15,00;Fantasma;categoria fora do cadastro
+04/09/2026;;Gas;valor em branco

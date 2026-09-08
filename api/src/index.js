@@ -73,7 +73,7 @@ app.use('/pagamentos', pagamentosRoutes);
 app.use('/fechamentos', fechamentosRoutes);
 app.use('/fluxo', fluxoRoutes);
 app.use('/uploads', limiter(40), uploadsRoutes);
-app.use('/importacao', limiter(20), somenteDono, importacaoRoutes);
+app.use('/importacao', limiter(120), somenteDono, importacaoRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'rota nao encontrada' }));
 

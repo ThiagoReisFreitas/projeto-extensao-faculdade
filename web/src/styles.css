@@ -698,3 +698,45 @@ td.acoes .link + .link { margin-left: 10px; }
 .cad-card-top strong { font-size: 1rem; }
 .cad-card-meta { margin: 6px 0 8px; font-size: .8rem; color: var(--muted); font-family: var(--font-mono); }
 
+
+/* ---- dropzone da tela Importar ---- */
+.dropzone {
+  margin-top: 4px; padding: 16px; text-align: center;
+  border: 1.5px dashed var(--border); border-radius: var(--radius); background: var(--surface);
+  transition: border-color .12s ease, background .12s ease;
+}
+.dropzone[data-over] { border-color: var(--accent); background: var(--accent-weak); }
+.dropzone > label { display: block; margin-bottom: 4px; }
+.dz-hint { margin: 0 0 8px; font-size: .82rem; color: var(--muted); }
+.dz-hint b { color: var(--text); word-break: break-all; }
+.dropzone input[type="file"] { display: inline-block; }
+
+/* option: alguns temas do SO ignoram a fonte do <select> e renderizam a lista
+   gigante. Fixar aqui deixa a lista suspensa no mesmo tamanho do campo. */
+option { font: 400 16px/1.4 var(--font-sans); color: var(--text); background: var(--surface); }
+
+/* passo-a-passo do resultado da importacao */
+.imp-feito { border-left: 3px solid var(--positive); padding-left: 12px; }
+.imp-passos { margin: 8px 0 0; padding-left: 18px; font-size: .88rem; color: var(--muted); }
+.imp-passos li { margin: 2px 0; }
+
+/* dropdown proprio (o <select> nativo do Firefox/Linux ignora CSS e abre a
+   lista com a fonte gigante do tema GTK). Usado na tela Importar. */
+.sel { position: relative; }
+.sel-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; font: 400 16px/1.4 var(--font-sans); text-align: left;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
+}
+.sel-btn[aria-expanded="true"] { border-color: var(--accent); }
+.sel-btn .caret { color: var(--muted); flex-shrink: 0; }
+.sel-list {
+  position: absolute; z-index: 30; left: 0; right: 0; margin: 4px 0 0; padding: 4px;
+  list-style: none; max-height: 260px; overflow-y: auto;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.sel-list li { padding: 8px 10px; border-radius: 2px; font-size: .9rem; cursor: pointer; }
+.sel-list li:hover { background: var(--accent-weak); }
+.sel-list li.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }

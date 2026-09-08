@@ -4,14 +4,15 @@ import { q, pool } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { calcTaxa } from '../taxa.js';
 import { assertDiaAberto } from '../fechamento.js';
-import { detectarColunas, montarLinhas, parseCsv, CAMPOS } from '../importacao.js';
+import { detectarColunas, montarLinhas, lerPlanilha, CAMPOS } from '../importacao.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES) || 2 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
-    const ok = /csv|text\/plain|excel|octet-stream/i.test(file.mimetype) || /\.csv$/i.test(file.originalname);
-    cb(ok ? null : new HttpError(400, 'envie um arquivo .csv'), ok);
+    const ok = /\.(csv|xlsx|xls)$/i.test(file.originalname)
+      || /csv|text\/plain|excel|spreadsheet|octet-stream/i.test(file.mimetype);
+    cb(ok ? null : new HttpError(400, 'envie um arquivo .csv, .xlsx ou .xls'), ok);
   },
 });
 
@@ -21,13 +22,18 @@ const r = express.Router();
 const validaTipo = (req, _res, next) =>
   (TIPOS.includes(req.params.tipo) ? next() : next(new HttpError(400, 'tipo invalido')));
 
-// passo 1: le o CSV e devolve colunas + amostra pra montar o mapeamento na tela
+const parseOpcoes = (raw) => {
+  try { return JSON.parse(raw || '{}'); } catch { throw new HttpError(400, 'opcoes invalidas (esperado JSON)'); }
+};
+
+// passo 1: le a planilha e devolve colunas + amostra + abas + linha do cabecalho.
 r.post('/:tipo/preview', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
-  if (!req.file) throw new HttpError(400, 'arquivo .csv obrigatorio (campo "arquivo")');
+  if (!req.file) throw new HttpError(400, 'arquivo obrigatorio (campo "arquivo")');
+  const opcoes = parseOpcoes(req.body.opcoes);
   try {
-    res.json(detectarColunas(req.file.buffer));
+    res.json(detectarColunas(req.file.buffer, req.file.originalname, opcoes));
   } catch (e) {
-    throw new HttpError(400, `nao consegui ler o CSV: ${e.message}`);
+    throw new HttpError(400, `nao consegui ler a planilha: ${e.message}`);
   }
 }));
 
@@ -45,14 +51,13 @@ const DEFAULT_KEY = { forma_pagamento: 'forma_default_id', categoria: 'categoria
 
 // passo 2: valida tudo e, se nao houver erro nenhum, insere em transacao (tudo ou nada).
 r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
-  if (!req.file) throw new HttpError(400, 'arquivo .csv obrigatorio (campo "arquivo")');
+  if (!req.file) throw new HttpError(400, 'arquivo obrigatorio (campo "arquivo")');
   const { tipo } = req.params;
 
-  let mapa; let opcoes;
-  try {
-    mapa = JSON.parse(req.body.mapa || '{}');
-    opcoes = JSON.parse(req.body.opcoes || '{}');
-  } catch { throw new HttpError(400, 'mapa/opcoes invalidos (esperado JSON)'); }
+  let mapa;
+  try { mapa = JSON.parse(req.body.mapa || '{}'); }
+  catch { throw new HttpError(400, 'mapa invalido (esperado JSON)'); }
+  const opcoes = parseOpcoes(req.body.opcoes);
 
   for (const campo of CAMPOS[tipo].obrigatorios) {
     const temDefault = DEFAULT_KEY[campo] && opcoes[DEFAULT_KEY[campo]];
@@ -60,15 +65,20 @@ r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
   }
 
   let linhasCsv;
-  try { linhasCsv = parseCsv(req.file.buffer); }
-  catch (e) { throw new HttpError(400, `nao consegui ler o CSV: ${e.message}`); }
-  if (!linhasCsv.length) throw new HttpError(400, 'CSV sem linhas de dados');
-  if (linhasCsv.length > 5000) throw new HttpError(413, 'CSV muito grande — divida em blocos de ate 5000 linhas');
+  try { linhasCsv = lerPlanilha(req.file.buffer, req.file.originalname, opcoes); }
+  catch (e) { throw new HttpError(400, `nao consegui ler a planilha: ${e.message}`); }
+  if (!linhasCsv.length) throw new HttpError(400, 'planilha sem linhas de dados');
+  if (linhasCsv.length > 5000) throw new HttpError(413, 'planilha muito grande — divida em blocos de ate 5000 linhas');
 
   const dicionarios = await carregarDicionarios();
-  const { linhas, erros } = montarLinhas({ tipo, linhasCsv, mapa, opcoes, dicionarios });
+  const { linhas, erros, ignoradas, casamentos } = montarLinhas({ tipo, linhasCsv, mapa, opcoes, dicionarios });
 
-  if (erros.length) return res.status(422).json({ inseridos: 0, erros });
+  // opcoes.simular = so valida e devolve o diagnostico, nao grava nada.
+  if (opcoes.simular) {
+    return res.json({ simulado: true, ok: linhas.length, erros, ignoradas, casamentos });
+  }
+
+  if (erros.length) return res.status(422).json({ inseridos: 0, erros, ignoradas, casamentos });
 
   // um check de dia-fechado por data distinta (nao por linha)
   for (const dia of new Set(linhas.map((l) => l.data))) await assertDiaAberto(dia);
@@ -109,7 +119,7 @@ r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
     client.release();
   }
 
-  res.status(201).json({ inseridos: linhas.length, erros: [] });
+  res.status(201).json({ inseridos: linhas.length, erros: [], ignoradas, casamentos });
 }));
 
 export default r;

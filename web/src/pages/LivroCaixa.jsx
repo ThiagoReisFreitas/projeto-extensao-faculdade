@@ -6,6 +6,7 @@ import { useToast } from '../toast.jsx';
 import { Money } from '../money.jsx';
 import { EmptyState, EstornoModal, ConfirmModal } from '../components.jsx';
 import { LancamentoPanel } from '../lancamento.jsx';
+import { juntarEstornos } from '../estorno.js';
 
 const mesAtual = () => hoje().slice(0, 7);
 const mesRange = (m) => {
@@ -91,12 +92,14 @@ export default function LivroCaixa() {
     [fechamentos.data],
   );
 
-  // mescla + ordena + saldo acumulado (sobre TODOS os movimentos, antes de filtrar)
+  // mescla + ordena + saldo acumulado (sobre TODOS os movimentos, antes de filtrar).
+  // Estorno: junta o lançamento original com a sua reversão numa linha só, riscada,
+  // que soma 0 no caixa — em vez de mostrar as duas pontas soltas.
   const movs = useMemo(() => {
-    const it = [
+    const raw = [
       ...(receitas.data || []).map((x) => ({
         tipo: 'receita', cartao: !!x.operadora_id, data: String(x.data).slice(0, 10), ts: x.criado_em, id: x.id,
-        estorno: !!x.estorno_de_id, forma: x.forma_pagamento_nome,
+        estornoDeId: x.estorno_de_id, motivo: x.motivo_estorno, forma: x.forma_pagamento_nome,
         desc: `${x.forma_pagamento_nome}${x.operadora_nome ? ` · ${x.operadora_nome}` : ''}`,
         valor: Number(x.valor_liquido),
         dup: {
@@ -106,7 +109,7 @@ export default function LivroCaixa() {
       })),
       ...(gastos.data || []).map((x) => ({
         tipo: 'gasto', cartao: false, data: String(x.data).slice(0, 10), ts: x.criado_em, id: x.id,
-        estorno: !!x.estorno_de_id, forma: '—',
+        estornoDeId: x.estorno_de_id, motivo: x.motivo_estorno, forma: '—',
         desc: `${x.categoria_nome}${x.descricao ? ` · ${x.descricao}` : ''}`, valor: -Number(x.valor),
         dup: {
           tipo: 'gasto', valor: x.valor, categoriaId: x.categoria_id,
@@ -115,16 +118,26 @@ export default function LivroCaixa() {
       })),
       ...(pagamentos.data || []).map((x) => ({
         tipo: 'folha', cartao: false, data: String(x.data).slice(0, 10), ts: x.criado_em, id: x.id,
-        estorno: !!x.estorno_de_id, forma: '—', desc: `Folha · ${x.funcionario_nome}`, valor: -Number(x.valor),
+        estornoDeId: x.estorno_de_id, motivo: x.motivo_estorno, forma: '—',
+        desc: `Folha · ${x.funcionario_nome}`, valor: -Number(x.valor),
         dup: {
           tipo: 'folha', valor: x.valor, funcionarioId: x.funcionario_id,
           data: String(x.data).slice(0, 10), ref: x.periodo_referencia,
         },
       })),
-    ].sort((a, b) => `${a.data}${a.ts}`.localeCompare(`${b.data}${b.ts}`));
+    ];
+
+    const it = juntarEstornos(raw)
+      .sort((a, b) => `${a.data}${a.ts}`.localeCompare(`${b.data}${b.ts}`));
     let acc = 0;
     return it.map((m) => { acc += m.valor; return { ...m, saldo: acc }; });
   }, [receitas.data, gastos.data, pagamentos.data]);
+
+  // ids de lançamentos estornados — tirados dos totais por forma/categoria
+  const alvosEstornados = useMemo(() => {
+    const f = (arr) => new Set((arr || []).filter((x) => x.estorno_de_id).map((x) => x.estorno_de_id));
+    return { receitas: f(receitas.data), gastos: f(gastos.data) };
+  }, [receitas.data, gastos.data]);
 
   const filtrados = movs.filter((m) => {
     if (filtro === 'receitas' && m.tipo !== 'receita') return false;
@@ -145,19 +158,23 @@ export default function LivroCaixa() {
 
   const entradaPorForma = useMemo(() => {
     const map = new Map();
-    (receitas.data || []).filter((x) => !x.estorno_de_id).forEach((x) => {
-      map.set(x.forma_pagamento_nome, (map.get(x.forma_pagamento_nome) || 0) + Number(x.valor_liquido));
-    });
+    (receitas.data || [])
+      .filter((x) => !x.estorno_de_id && !alvosEstornados.receitas.has(x.id))
+      .forEach((x) => {
+        map.set(x.forma_pagamento_nome, (map.get(x.forma_pagamento_nome) || 0) + Number(x.valor_liquido));
+      });
     return [...map.entries()].map(([nome, valor]) => ({ nome, valor })).sort((a, b) => b.valor - a.valor);
-  }, [receitas.data]);
+  }, [receitas.data, alvosEstornados]);
 
   const saidaPorCategoria = useMemo(() => {
     const map = new Map();
-    (gastos.data || []).filter((x) => !x.estorno_de_id).forEach((x) => {
-      map.set(x.categoria_nome, (map.get(x.categoria_nome) || 0) + Number(x.valor));
-    });
+    (gastos.data || [])
+      .filter((x) => !x.estorno_de_id && !alvosEstornados.gastos.has(x.id))
+      .forEach((x) => {
+        map.set(x.categoria_nome, (map.get(x.categoria_nome) || 0) + Number(x.valor));
+      });
     return [...map.entries()].map(([nome, valor]) => ({ nome, valor })).sort((a, b) => b.valor - a.valor);
-  }, [gastos.data]);
+  }, [gastos.data, alvosEstornados]);
 
   return (
     <div className="page">
@@ -205,13 +222,14 @@ export default function LivroCaixa() {
                 <Money value={d.total} sign />
               </div>
               {d.ms.map((m) => (
-                <div className={`extrato-linha${m.estorno ? ' estornado' : ''}`} key={`${m.tipo}${m.id}`}>
+                <div className={`extrato-linha${m.estornado ? ' estornado' : ''}`} key={`${m.tipo}${m.id}`}
+                  title={m.estornado && m.motivo ? `Estornado: ${m.motivo}` : undefined}>
                   <span className="el-data">{m.data.slice(8, 10)}/{m.data.slice(5, 7)}</span>
-                  <span className="el-desc">{m.desc}</span>
+                  <span className="el-desc">{m.desc}{m.estornado ? ' — estornado' : ''}</span>
                   <span className="el-forma">{m.forma}</span>
-                  <span className="el-valor"><Money value={m.valor} /></span>
+                  <span className="el-valor"><Money value={m.valorMostrar} /></span>
                   <span className="el-saldo"><Money value={m.saldo} /></span>
-                  {!m.estorno && !d.fechado && dono && (
+                  {!m.estornado && !d.fechado && dono && (
                     <span className="el-acoes">
                       <button className="link" onClick={() => setEstMov({ mov: m, corrigir: true })}>corrigir</button>
                       <button className="link" onClick={() => setEstMov({ mov: m, corrigir: false })}>estornar</button>
