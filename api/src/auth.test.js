@@ -43,11 +43,12 @@ test('verificarReset: rejeita sem usuario', () => {
 
 test('assinarComprovante/verificarAssinaturaComprovante: url valida passa', () => {
   const url = assinarComprovante(CAMINHO);
-  assert.equal(chama(verificarAssinaturaComprovante, reqDe(url.replace('/comprovantes/', ''))), undefined);
+  assert.match(url, /^\/api\/comprovantes\//); // nginx so proxya /api/ pro backend
+  assert.equal(chama(verificarAssinaturaComprovante, reqDe(url.replace('/api/comprovantes/', ''))), undefined);
 });
 
 test('verificarAssinaturaComprovante: rejeita sig adulterada', () => {
-  const url = assinarComprovante(CAMINHO).replace('/comprovantes/', '');
+  const url = assinarComprovante(CAMINHO).replace('/api/comprovantes/', '');
   const req = reqDe(url);
   req.query.sig = `${req.query.sig.slice(0, -1)}${req.query.sig.at(-1) === 'a' ? 'b' : 'a'}`;
   const erro = chama(verificarAssinaturaComprovante, req);
@@ -55,7 +56,7 @@ test('verificarAssinaturaComprovante: rejeita sig adulterada', () => {
 });
 
 test('verificarAssinaturaComprovante: rejeita link expirado', () => {
-  const url = assinarComprovante(CAMINHO).replace('/comprovantes/', '');
+  const url = assinarComprovante(CAMINHO).replace('/api/comprovantes/', '');
   const req = reqDe(url);
   req.query.exp = String(Date.now() - 1000);
   const erro = chama(verificarAssinaturaComprovante, req);

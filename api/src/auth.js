@@ -96,7 +96,11 @@ const assinaturaComprovante = (caminho, exp) => createHmac('sha256', SECRET())
 export function assinarComprovante(caminho) {
   const exp = Date.now() + COMPROVANTE_TTL_MS;
   const sig = assinaturaComprovante(caminho, exp);
-  return `/comprovantes/${caminho}?exp=${exp}&sig=${sig}`;
+  // nginx so proxya /api/ pro backend (proxy/nginx.conf); qualquer coisa fora
+  // disso cai no fallback do SPA (try_files ... /index.html). Sem o prefixo
+  // aqui a URL "assinada" nunca chegava no Express — devolvia o app inteiro
+  // (200, texto/html) em vez da imagem ou de um 401.
+  return `/api/comprovantes/${caminho}?exp=${exp}&sig=${sig}`;
 }
 
 export function verificarAssinaturaComprovante(req, _res, next) {

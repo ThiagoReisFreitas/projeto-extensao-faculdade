@@ -9,9 +9,12 @@ import { detectarColunas, montarLinhas, lerPlanilha, CAMPOS } from '../importaca
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES) || 2 * 1024 * 1024 },
+  // so extensao do nome (mimetype e' client-controlled e nao vale nada aqui;
+  // "OR mimetype contem octet-stream" deixava passar QUALQUER arquivo, exe
+  // incluido, porque octet-stream e' o generico que navegador/curl usam pra
+  // binario desconhecido — testado ao vivo, um .exe passava no filtro).
   fileFilter(_req, file, cb) {
-    const ok = /\.(csv|xlsx|xls)$/i.test(file.originalname)
-      || /csv|text\/plain|excel|spreadsheet|octet-stream/i.test(file.mimetype);
+    const ok = /\.(csv|xlsx|xls)$/i.test(file.originalname);
     cb(ok ? null : new HttpError(400, 'envie um arquivo .csv, .xlsx ou .xls'), ok);
   },
 });
