@@ -23,6 +23,11 @@ export default function Login() {
   // liga o "Esqueci a senha" só quando o servidor tem envio de e-mail configurado
   useEffect(() => {
     api.get('/auth/config').then((c) => setResetEmail(!!c.resetEmail)).catch(() => {});
+    // veio de um redirect por sessao expirada (api.js) -> avisa uma vez e limpa a flag
+    if (sessionStorage.getItem('pensador_sessao_expirada')) {
+      sessionStorage.removeItem('pensador_sessao_expirada');
+      setErr('Sua sessão expirou. Faça login novamente.');
+    }
   }, []);
 
   if (user) { nav('/', { replace: true }); return null; }

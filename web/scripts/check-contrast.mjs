@@ -19,14 +19,14 @@ const claro = {
   text: '#0b1a26', muted: '#5a6b78',
   accent: '#0f4c81', accentSoft: '#3f9fd0', accentBright: '#7fd0f5',
   deepField: '#0f4c81', textOnDeep: '#eaf3fa', onAccent: '#eaf3fa',
-  danger: '#b03a30',
+  danger: '#b03a30', positive: '#0b7a56', warn: '#8a5a00',
 };
 const escuro = {
   bg: '#1a1d1f', surface: '#23282b', surfaceTint: '#2a3033',
   text: '#e6ecf0', muted: '#96a3ac',
   accent: '#3f9fd0', accentSoft: '#7fd0f5', accentBright: '#7fd0f5',
   deepField: '#0f2f47', textOnDeep: '#eaf3fa', onAccent: '#0c2029',
-  danger: '#e08b81',
+  danger: '#e08b81', positive: '#5ecf9e', warn: '#e0b23f',
 };
 
 // [rotulo, fg, bg, alvo]
@@ -37,6 +37,8 @@ const pares = (t) => [
   ['muted/fundo', t.muted, t.bg, 4.5],
   ['accent/superficie (link)', t.accent, t.surface, 4.5],
   ['danger/superficie', t.danger, t.surface, 4.5],
+  ['positive/superficie (money--pos)', t.positive, t.surface, 4.5],
+  ['warn/superficie (selo-dia erro)', t.warn, t.surface, 4.5],
   ['on-accent/botao primario', t.onAccent, t.accent, 4.5],
   ['text-on-deep/barra', t.textOnDeep, t.deepField, 4.5],
   ['accent/tint (chip on)', t.accent, t.surfaceTint, 3],

@@ -3,6 +3,7 @@ import { q } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { somenteDono } from '../auth.js';
 import { assertDiaAberto } from '../fechamento.js';
+import { registrarEvento } from '../auditoria.js';
 import { dataNaoFutura, comprovantePathValido } from '../validacao.js';
 
 const r = express.Router();
@@ -68,6 +69,7 @@ r.post('/:id/estorno', somenteDono, ah(async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [o.data, -o.valor, o.categoria_id, `estorno do gasto #${o.id}`, req.user.id, o.id, motivo],
   );
+  await registrarEvento('estorno_gasto', { usuarioId: req.user.id, detalhe: { gasto_id: o.id, motivo }, ip: req.ip });
   res.status(201).json(rows[0]);
 }));
 

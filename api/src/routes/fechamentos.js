@@ -2,6 +2,7 @@ import express from 'express';
 import { q } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { somenteDono } from '../auth.js';
+import { registrarEvento } from '../auditoria.js';
 import { dataValida } from '../validacao.js';
 
 const r = express.Router();
@@ -56,6 +57,7 @@ r.post('/:data/reabrir', somenteDono, ah(async (req, res) => {
     [req.user.id, req.params.data],
   );
   if (!rows.length) throw new HttpError(404, 'nao ha dia fechado nessa data');
+  await registrarEvento('reabertura_dia', { usuarioId: req.user.id, detalhe: { data: req.params.data }, ip: req.ip });
   res.json(rows[0]);
 }));
 

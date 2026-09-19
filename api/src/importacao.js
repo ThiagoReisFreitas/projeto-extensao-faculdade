@@ -2,12 +2,34 @@
 // Sem acesso a banco -> testavel isolado. A rota (routes/importacao.js) chama
 // estas funcoes e faz os INSERT em transacao.
 import { parse } from 'csv-parse/sync';
-import * as XLSX from 'xlsx';
-
-// SSF nao vem no namespace ESM do pacote; fica no default (CJS).
-const SSF = XLSX.SSF || (XLSX.default && XLSX.default.SSF);
+import ExcelJS from 'exceljs';
+import { dataNaoFutura } from './validacao.js';
 
 const RE_PLANILHA = /\.xlsx?$/i;
+
+// celula do exceljs pode vir como valor cru, Date, formula ({result}), rich
+// text ({richText}) ou hyperlink ({text}) — normaliza pro que o resto do
+// arquivo espera (string, number ou Date).
+function valorCelula(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return v;
+  if (typeof v === 'object') {
+    if ('result' in v) return valorCelula(v.result);
+    if (Array.isArray(v.richText)) return v.richText.map((t) => t.text).join('');
+    if ('text' in v) return v.text;
+    return '';
+  }
+  return v;
+}
+
+function planilhaParaMatriz(ws) {
+  const matriz = [];
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    const valores = row.values.slice(1); // index 0 e sempre undefined (1-based)
+    matriz.push(valores.map(valorCelula));
+  });
+  return matriz;
+}
 
 // Excel pt-BR exporta CSV em latin1; forcamos utf8 e caimos pra latin1 se der lixo.
 function decodificarTexto(bufOrStr) {
@@ -46,13 +68,14 @@ const isoData = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padS
 
 // CSV/XLSX -> { matriz: linha[][], abas: string[] }. Ainda nao interpreta cabecalho.
 // opcoes.aba = nome da aba do xlsx (default: a primeira).
-function lerMatriz(bufOrStr, nomeArquivo, opcoes = {}) {
+async function lerMatriz(bufOrStr, nomeArquivo, opcoes = {}) {
   if (RE_PLANILHA.test(nomeArquivo || '')) {
-    const wb = XLSX.read(bufOrStr, { type: Buffer.isBuffer(bufOrStr) ? 'buffer' : 'string', cellDates: true });
-    const abas = wb.SheetNames;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(bufOrStr);
+    const abas = wb.worksheets.map((ws) => ws.name);
     const nome = opcoes.aba && abas.includes(opcoes.aba) ? opcoes.aba : abas[0];
-    const ws = nome ? wb.Sheets[nome] : null;
-    const matriz = ws ? XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true }) : [];
+    const ws = nome ? wb.getWorksheet(nome) : null;
+    const matriz = ws ? planilhaParaMatriz(ws) : [];
     return { matriz, abas };
   }
   const texto = decodificarTexto(bufOrStr);
@@ -115,14 +138,14 @@ export function montarTabela(matriz, opcoes = {}) {
 }
 
 // Compat: array de objetos { coluna: valor }, cabecalho auto (ou opcoes.linha_cabecalho).
-export function lerPlanilha(bufOrStr, nomeArquivo = '', opcoes = {}) {
-  const { matriz } = lerMatriz(bufOrStr, nomeArquivo, opcoes);
+export async function lerPlanilha(bufOrStr, nomeArquivo = '', opcoes = {}) {
+  const { matriz } = await lerMatriz(bufOrStr, nomeArquivo, opcoes);
   return montarTabela(matriz, opcoes).linhas;
 }
 
 // { colunas, amostra (<=20 linhas), total, abas, cabecalho_linha }
-export function detectarColunas(bufOrStr, nomeArquivo = '', opcoes = {}) {
-  const { matriz, abas } = lerMatriz(bufOrStr, nomeArquivo, opcoes);
+export async function detectarColunas(bufOrStr, nomeArquivo = '', opcoes = {}) {
+  const { matriz, abas } = await lerMatriz(bufOrStr, nomeArquivo, opcoes);
   const { colunas, linhas, cabecalho_linha } = montarTabela(matriz, opcoes);
   return { colunas, amostra: linhas.slice(0, 20), total: linhas.length, abas, cabecalho_linha };
 }
@@ -155,10 +178,12 @@ export function coerceData(str, formato = 'br', opcoes = {}) {
     if (formato === 'us') [, m, d] = mm.map(Number);
     else [, d, m] = mm.map(Number);
     y = ano;
-  } else if (SSF && /^\d{4,5}$/.test(s) && Number(s) >= 20000 && Number(s) <= 60000) {
-    const o = SSF.parse_date_code(Number(s));
-    if (!o || !o.y) throw new Error(`data "${s}" nao reconhecida`);
-    ({ y, m, d } = o);
+  } else if (/^\d{4,5}$/.test(s) && Number(s) >= 20000 && Number(s) <= 60000) {
+    // numero de serie do Excel (dias desde 1899-12-30). Raro chegar aqui: uma
+    // celula-data de verdade ja vira Date direto (exceljs/coerceData acima);
+    // isso so cobre numero cru sem formatacao de data na planilha.
+    const dt = new Date(Date.UTC(1899, 11, 30) + Number(s) * 86400000);
+    y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
   } else {
     throw new Error(`data "${s}" nao reconhecida`);
   }
@@ -191,17 +216,23 @@ const semAcento = (s) => String(s ?? '')
 
 // { item, exato } | null. Casa exato (ignorando acento/caixa) e, se nao achar,
 // por inclusao ("insumo" ~ "Insumos", "compras de insumos" ~ "Insumos").
+// Dois ou mais candidatos por inclusao ("Energia" ~ "Energia eletrica" E
+// "Energia solar") e ambiguo — melhor virar erro de linha do que grudar em
+// dinheiro/folha na entidade errada em silencio.
 function casar(lista, nome) {
   const alvo = semAcento(nome);
   if (!alvo) return null;
   const arr = lista || [];
   const ex = arr.find((x) => semAcento(x.nome) === alvo);
   if (ex) return { item: ex, exato: true };
-  const ap = arr.find((x) => {
+  const aproximados = arr.filter((x) => {
     const a = semAcento(x.nome);
     return a && (a.includes(alvo) || alvo.includes(a));
   });
-  return ap ? { item: ap, exato: false } : null;
+  if (aproximados.length > 1) {
+    throw new Error(`"${nome}" e ambiguo entre ${aproximados.map((x) => x.nome).join(', ')} — mapeie o ID exato ou ajuste o cadastro`);
+  }
+  return aproximados.length ? { item: aproximados[0], exato: false } : null;
 }
 const porId = (lista, id) => (id ? (lista || []).find((x) => String(x.id) === String(id)) || null : null);
 
@@ -240,6 +271,7 @@ export function montarLinhas({ tipo, linhasCsv, mapa, opcoes = {}, dicionarios =
     const brutoValor = get(valorCampo);
     try {
       const data = coerceData(brutoData, fData, opcoes);
+      if (!dataNaoFutura(data)) throw new Error(`data "${data}" no futuro nao permitida`);
       const valor = coerceValor(brutoValor, fValor);
       if (!(valor > 0)) throw new Error('valor deve ser maior que zero');
 

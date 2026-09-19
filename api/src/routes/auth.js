@@ -4,8 +4,14 @@ import jwt from 'jsonwebtoken';
 import { q } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { assinarToken, authObrigatorio, bcrypt, assinarReset, verificarReset } from '../auth.js';
+import { registrarEvento } from '../auditoria.js';
 import { senhaForte } from '../validacao.js';
 import { notificarReset, emailAtivo } from '../email.js';
+
+// lockout por conta (alem do rate-limit por IP acima): trava 15min depois de
+// 5 falhas seguidas, mesmo vindo de IPs diferentes.
+const MAX_TENTATIVAS = 5;
+const BLOQUEIO_MIN = 15;
 
 const r = express.Router();
 
@@ -27,20 +33,32 @@ r.post('/login', loginLimiter, ah(async (req, res) => {
   if (!email || !senha) throw new HttpError(400, 'email e senha obrigatorios');
   const { rows } = await q('SELECT * FROM usuarios WHERE email = $1 AND ativo = true', [email]);
   const user = rows[0];
-  const confere = await bcrypt.compare(senha, user ? user.senha_hash : DUMMY_HASH);
-  if (!user || !confere) throw new HttpError(401, 'credenciais invalidas');
+  const bloqueado = !!(user && user.bloqueado_ate && new Date(user.bloqueado_ate) > new Date());
+  // se bloqueado, compara com o hash fixo mesmo que a senha esteja certa —
+  // nao aceita login e mantem o tempo de resposta igual ao de credenciais erradas.
+  const confere = await bcrypt.compare(senha, user && !bloqueado ? user.senha_hash : DUMMY_HASH);
+
+  if (!user || bloqueado || !confere) {
+    if (user && !bloqueado) {
+      await q(
+        `UPDATE usuarios SET tentativas_login = tentativas_login + 1,
+           bloqueado_ate = CASE WHEN tentativas_login + 1 >= $2 THEN now() + ($3 || ' minutes')::interval ELSE bloqueado_ate END
+         WHERE id = $1`,
+        [user.id, MAX_TENTATIVAS, BLOQUEIO_MIN],
+      );
+    }
+    await registrarEvento('login_falho', { usuarioId: user?.id, detalhe: { email }, ip: req.ip });
+    throw new HttpError(401, 'credenciais invalidas');
+  }
+
+  await q('UPDATE usuarios SET tentativas_login = 0, bloqueado_ate = NULL WHERE id = $1', [user.id]);
+  await registrarEvento('login', { usuarioId: user.id, ip: req.ip });
   res.json({ token: assinarToken(user), user: { id: user.id, nome: user.nome, perfil: user.perfil } });
 }));
 
-// confere o token E se o usuario ainda existe/ativo no banco.
-// sem o check no banco, um token de um banco anterior (ex: apos `down -v`)
-// continuaria "logado" apontando pra um usuario que nao existe mais.
+// authObrigatorio ja busca o usuario fresco no banco (id/nome/perfil, ativo=true)
 r.get('/me', authObrigatorio, ah(async (req, res) => {
-  const { rows } = await q(
-    'SELECT id, nome, perfil FROM usuarios WHERE id = $1 AND ativo = true', [req.user.id],
-  );
-  if (!rows[0]) throw new HttpError(401, 'sessao invalida');
-  res.json({ user: rows[0] });
+  res.json({ user: req.user });
 }));
 
 // o front pergunta se pode mostrar o "Esqueci a senha" (depende de e-mail configurado)
@@ -68,7 +86,8 @@ r.post('/redefinir', resetLimiter, ah(async (req, res) => {
   const user = rows[0];
   verificarReset(token, user); // lanca 400 se nao servir
   const hash = await bcrypt.hash(senha, 10);
-  await q('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, user.id]);
+  // token_version + 1 revoga qualquer sessao aberta com a senha antiga.
+  await q('UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1 WHERE id = $2', [hash, user.id]);
   res.json({ ok: true });
 }));
 

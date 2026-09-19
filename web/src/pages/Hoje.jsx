@@ -66,6 +66,8 @@ export default function Hoje() {
 
   const r = resumo.data || {};
   const fechado = !!fech.data?.fechado;
+  // erro de rede nao pode virar "dia aberto"/"sem lancamento" silenciosamente
+  const erro = fech.err || resumo.err || receitas.err || gastos.err || pagamentos.err;
 
   const confirmarEstorno = async (motivo) => {
     const { linha, corrigir } = estModal;
@@ -94,10 +96,12 @@ export default function Hoje() {
     <div className="hoje">
       <div className="hoje-top">
         <h1>{dataExtenso()}</h1>
-        <span className={`selo-dia ${fechado ? 'fechado' : 'aberto'}`}>
-          {fechado ? '🔒 DIA FECHADO' : 'DIA ABERTO'}
+        <span className={`selo-dia ${fech.err ? 'erro' : fechado ? 'fechado' : 'aberto'}`}>
+          {fech.err ? '⚠️ status indisponível' : fechado ? '🔒 DIA FECHADO' : 'DIA ABERTO'}
         </span>
       </div>
+
+      {erro && <div className="err">Não consegui carregar os dados de hoje: {erro}</div>}
 
       <div className="hoje-atalhos">
         <button type="button" onClick={() => setPainel({ tipoInicial: 'receita' })}>+ Receita</button>

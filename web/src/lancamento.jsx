@@ -7,7 +7,7 @@ import { previewTaxa } from './periodo.js';
 import { useList } from './ui.jsx';
 import { useToast } from './toast.jsx';
 import { FotoInput, Label } from './components.jsx';
-import { Money } from './money.jsx';
+import { Money, parseBRL } from './money.jsx';
 import { vinculoLabel } from './rotulos.jsx';
 
 const TIPOS = [['receita', 'Receita'], ['gasto', 'Gasto'], ['folha', 'Folha']];
@@ -78,7 +78,8 @@ export function LancamentoPanel({ tipoInicial = 'receita', iniciais = null, onCl
 
   const forma = (formas.data || []).find((x) => String(x.id) === String(formaId));
   const operadora = (operadoras.data || []).find((x) => String(x.id) === String(operadoraId));
-  const prev = previewTaxa(valor, forma, operadora);
+  const valorNum = parseBRL(valor);
+  const prev = previewTaxa(valorNum, forma, operadora);
 
   const proximo = () => {
     setValor(''); setObs(''); setRef(''); setFoto(null); setFotoKey((k) => k + 1); setErr('');
@@ -95,7 +96,7 @@ export function LancamentoPanel({ tipoInicial = 'receita', iniciais = null, onCl
       let criado; let label;
       if (tipo === 'receita') {
         criado = await api.post('/receitas', {
-          data, valor_bruto: Number(valor), forma_pagamento_id: Number(formaId),
+          data, valor_bruto: valorNum, forma_pagamento_id: Number(formaId),
           operadora_id: forma?.requer_operadora ? Number(operadoraId) : null,
           observacao: obs || null, comprovante_path,
         });
@@ -103,18 +104,18 @@ export function LancamentoPanel({ tipoInicial = 'receita', iniciais = null, onCl
       } else if (tipo === 'gasto') {
         const cat = ativos(categorias).find((c) => String(c.id) === String(categoriaId));
         criado = await api.post('/gastos', {
-          data, valor: Number(valor), categoria_id: Number(categoriaId),
+          data, valor: valorNum, categoria_id: Number(categoriaId),
           descricao: obs || null, comprovante_path,
         });
         label = `Gasto · ${cat?.nome || ''}`;
       } else {
         const fn = ativos(funcionarios).find((f) => String(f.id) === String(funcionarioId));
         criado = await api.post('/pagamentos', {
-          funcionario_id: Number(funcionarioId), data, valor: Number(valor), periodo_referencia: ref || null,
+          funcionario_id: Number(funcionarioId), data, valor: valorNum, periodo_referencia: ref || null,
         });
         label = `Folha · ${fn?.nome || ''}`;
       }
-      setSessao((l) => [{ tipo, id: criado.id, label, valor: Number(valor), desfeito: false }, ...l]);
+      setSessao((l) => [{ tipo, id: criado.id, label, valor: valorNum, desfeito: false }, ...l]);
       toast(tipo === 'receita' ? 'Receita lançada' : tipo === 'gasto' ? 'Gasto lançado' : 'Pagamento lançado');
       onLancado?.();
       return true;
@@ -135,7 +136,7 @@ export function LancamentoPanel({ tipoInicial = 'receita', iniciais = null, onCl
     } catch (e) { toast(e.message, 'err'); }
   };
 
-  const podeSalvar = Number(valor) > 0 && (
+  const podeSalvar = valorNum > 0 && (
     (tipo === 'receita' && formaId && (!forma?.requer_operadora || operadoraId))
     || (tipo === 'gasto' && categoriaId)
     || (tipo === 'folha' && funcionarioId)
@@ -160,7 +161,7 @@ export function LancamentoPanel({ tipoInicial = 'receita', iniciais = null, onCl
 
           <Label htmlFor="lp-valor">Valor</Label>
           <input ref={valorRef} id="lp-valor" className="lp-valor" inputMode="decimal" placeholder="0,00"
-            value={valor} onChange={(e) => setValor(e.target.value.replace(',', '.'))} required />
+            value={valor} onChange={(e) => setValor(e.target.value)} required />
 
           <Label htmlFor="lp-data">Data</Label>
           <input id="lp-data" type="date" value={data} max={hoje()}

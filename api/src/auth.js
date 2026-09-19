@@ -1,9 +1,9 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { q } from './db.js';
 import { HttpError } from './http.js';
-import { jwtSecretAceitavel, senhaForte } from './validacao.js';
+import { comprovantePathValido, jwtSecretAceitavel, senhaForte } from './validacao.js';
 
 const SECRET = () => process.env.JWT_SECRET;
 const JWT_OPTS = { algorithms: ['HS256'] };
@@ -24,7 +24,7 @@ export function assertConfigSeguranca() {
 
 export function assinarToken(user) {
   return jwt.sign(
-    { id: user.id, perfil: user.perfil, nome: user.nome },
+    { id: user.id, perfil: user.perfil, nome: user.nome, token_version: user.token_version },
     SECRET(),
     { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES || '12h' },
   );
@@ -53,27 +53,67 @@ export function verificarReset(token, user) {
   return { id: p.id };
 }
 
-export function authObrigatorio(req, _res, next) {
+// confere o token E se o usuario ainda existe/esta ativo/mantem o perfil no banco.
+// so confiar no claim do JWT deixaria um usuario desativado/rebaixado com acesso
+// total ate o token expirar sozinho (ate 12h, JWT_EXPIRES) — mesmo check que
+// GET /auth/me ja fazia, agora em toda rota autenticada.
+export async function carregarUsuarioAtivo(id) {
+  const { rows } = await q('SELECT id, nome, perfil, token_version FROM usuarios WHERE id = $1 AND ativo = true', [id]);
+  if (!rows[0]) throw new HttpError(401, 'sessao invalida');
+  return rows[0];
+}
+
+export async function authObrigatorio(req, _res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return next(new HttpError(401, 'nao autenticado'));
+  let payload;
+  try { payload = jwt.verify(token, SECRET(), JWT_OPTS); }
+  catch { return next(new HttpError(401, 'token invalido ou expirado')); }
   try {
-    req.user = jwt.verify(token, SECRET(), JWT_OPTS);
+    const usuario = await carregarUsuarioAtivo(payload.id);
+    // token_version diferente = senha trocada (ou logout-all) depois deste
+    // token ser emitido — revoga na hora, nao espera o JWT_EXPIRES (12h).
+    if (usuario.token_version !== payload.token_version) {
+      throw new HttpError(401, 'sessao invalida');
+    }
+    const { token_version, ...semVersao } = usuario;
+    req.user = semVersao;
     next();
-  } catch {
-    next(new HttpError(401, 'token invalido ou expirado'));
-  }
+  } catch (e) { next(e); }
 }
 
-// aceita token no header OU em ?token= (necessario p/ <img>/<a> de comprovante,
-// que nao mandam header). ponytail: token na URL pode vazar em log de proxy —
-// ok no piloto local; na VPS trocar por URL assinada de curta duracao.
-export function authHeaderOuQuery(req, _res, next) {
-  const h = req.headers.authorization || '';
-  const token = h.startsWith('Bearer ') ? h.slice(7) : req.query.token;
-  if (!token) return next(new HttpError(401, 'nao autenticado'));
-  try { req.user = jwt.verify(token, SECRET(), JWT_OPTS); next(); }
-  catch { next(new HttpError(401, 'token invalido ou expirado')); }
+// URL assinada de curta duracao p/ <img>/<a> de comprovante (nao mandam header
+// Authorization). Substitui o JWT de 12h cru na query string: exposto na
+// internet via Funnel, aquele token vazava em log de proxy/historico do
+// navegador. Aqui a assinatura so vale por TTL curto e nao serve pra mais nada.
+const COMPROVANTE_TTL_MS = 5 * 60 * 1000;
+
+const assinaturaComprovante = (caminho, exp) => createHmac('sha256', SECRET())
+  .update(`${caminho}:${exp}`)
+  .digest('hex');
+
+export function assinarComprovante(caminho) {
+  const exp = Date.now() + COMPROVANTE_TTL_MS;
+  const sig = assinaturaComprovante(caminho, exp);
+  return `/comprovantes/${caminho}?exp=${exp}&sig=${sig}`;
+}
+
+export function verificarAssinaturaComprovante(req, _res, next) {
+  const caminho = req.path.replace(/^\/+/, '');
+  const exp = Number(req.query.exp);
+  const sig = String(req.query.sig || '');
+  if (!comprovantePathValido(caminho) || !exp || !sig) {
+    return next(new HttpError(401, 'link invalido'));
+  }
+  if (Date.now() > exp) return next(new HttpError(401, 'link expirado'));
+  const esperada = assinaturaComprovante(caminho, exp);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(esperada);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return next(new HttpError(401, 'link invalido'));
+  }
+  next();
 }
 
 export function somenteDono(req, _res, next) {

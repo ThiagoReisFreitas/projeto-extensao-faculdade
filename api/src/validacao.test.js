@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   jwtSecretAceitavel, dataValida, dataNaoFutura, hojeISO,
-  comprovantePathValido, senhaForte, imagemValida, restariaAlgumDono,
+  comprovantePathValido, senhaForte, emailValido, imagemValida, restariaAlgumDono,
 } from './validacao.js';
 
 test('jwtSecretAceitavel: rejeita ausente/curto/placeholder', () => {
@@ -31,12 +31,32 @@ test('dataNaoFutura: hoje ok, amanha nao, ontem ok', () => {
   assert.equal(dataNaoFutura('2050-01-01'), false);
 });
 
-test('comprovantePathValido: só o formato do upload', () => {
+test('comprovantePathValido: aceita as extensoes reais que o upload pode gravar', () => {
   assert.equal(comprovantePathValido('receitas/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.webp'), true);
-  assert.equal(comprovantePathValido('gastos/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.webp'), true);
+  assert.equal(comprovantePathValido('gastos/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.jpg'), true);
+  assert.equal(comprovantePathValido('gastos/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.png'), true);
   assert.equal(comprovantePathValido('../../etc/passwd'), false);
   assert.equal(comprovantePathValido('receitas/2026/09/arquivo.webp'), false);
+  assert.equal(comprovantePathValido('receitas/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.exe'), false);
   assert.equal(comprovantePathValido('outro/2026/09/0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d.webp'), false);
+});
+
+test('hojeISO: usa o fuso America/Sao_Paulo, nao UTC do host', (t) => {
+  // 23:30 UTC de 2026-09-03 == 20:30 em Sao Paulo (UTC-3) -> ainda dia 03, nao 04
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-03T23:30:00Z') });
+  assert.equal(hojeISO(), '2026-09-03');
+  // logo apos meia-noite UTC (21:00 em Sao Paulo do dia anterior) -> ainda dia 03 em BRT
+  t.mock.timers.tick(30 * 60 * 1000); // +30min -> 2026-09-04T00:00:00Z == 2026-09-03T21:00 BRT
+  assert.equal(hojeISO(), '2026-09-03');
+});
+
+test('emailValido: formato basico', () => {
+  assert.equal(emailValido('dono@opensador.local'), true);
+  assert.equal(emailValido('a@b.co'), true);
+  assert.equal(emailValido('sem-arroba'), false);
+  assert.equal(emailValido('sem-dominio@'), false);
+  assert.equal(emailValido('@sem-usuario.com'), false);
+  assert.equal(emailValido(''), false);
 });
 
 test('senhaForte: >= 8', () => {

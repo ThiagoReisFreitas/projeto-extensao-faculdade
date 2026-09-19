@@ -1,15 +1,17 @@
 import express from 'express';
 import { q } from '../db.js';
 import { HttpError, ah } from '../http.js';
-import { dataValida } from '../validacao.js';
+import { dataValida, hojeISO } from '../validacao.js';
 
 const r = express.Router();
 
+// mesma formatacao de fuso (America/Sao_Paulo) usada em hojeISO, para uma data qualquer
+const diaLocalISO = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(date);
+
 // range padrao: ultimos 30 dias
 function range(req) {
-  const ate = req.query.ate || new Date().toISOString().slice(0, 10);
-  const de = req.query.de ||
-    new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10);
+  const ate = req.query.ate || hojeISO();
+  const de = req.query.de || diaLocalISO(new Date(Date.now() - 29 * 864e5));
   if (!dataValida(de) || !dataValida(ate)) throw new HttpError(400, 'periodo invalido (use AAAA-MM-DD)');
   return { de, ate };
 }
@@ -74,11 +76,16 @@ r.get('/export.csv', ah(async (req, res) => {
     'SELECT * FROM vw_fluxo_diario WHERE data BETWEEN $1 AND $2 ORDER BY data', [de, ate],
   );
   const cols = ['data', 'total_receita_bruta', 'total_receita_liquida', 'total_taxas', 'total_gasto', 'total_folha', 'saldo'];
+  const numericas = new Set(cols.slice(1));
   const linhas = [cols.join(';')];
   for (const row of rows) {
     linhas.push(cols.map((c) => {
       const v = row[c];
-      return v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      // Postgres NUMERIC vem com ponto decimal; ';' + ',' e o padrao pt-BR
+      // que o Excel/LibreOffice BR reconhece como numero (nao texto).
+      if (numericas.has(c)) return String(v ?? '0').replace('.', ',');
+      return String(v ?? '');
     }).join(';'));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

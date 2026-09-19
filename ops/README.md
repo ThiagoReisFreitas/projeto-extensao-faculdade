@@ -70,21 +70,41 @@ a função `enviarEmail` em `api/src/email.js`.
 
 Ver `ops/crontab.example`.
 
-## Checklist de segurança pré-VPS (pendências deixadas de fora do piloto local)
+## Checklist de segurança pré-Funnel/VPS (pendências deixadas de fora do piloto local)
 
-O piloto roda com o proxy preso a `127.0.0.1` (sem TLS). Antes de expor na LAN ou VPS:
+O piloto roda com o proxy preso a `127.0.0.1` (sem TLS). Exposição planejada via
+**Tailscale Funnel** (TLS terminado na borda da Tailscale, sem precisar de domínio/porta
+própria) — item 1 abaixo não se aplica a esse caminho, só a uma VPS tradicional com domínio.
 
-1. **TLS no proxy** — copiar `proxy/nginx.tls.conf.example` por cima de `proxy/nginx.conf`,
-   montar certificados (self-signed na LAN, Let's Encrypt na VPS) e voltar a porta do `proxy`
-   no `docker-compose.yml` para `443:443` / `80:80`.
-2. **Comprovantes via URL assinada** — hoje `/comprovantes` aceita `?token=` (o token pode
-   vazar em log/histórico). Trocar por URL assinada de curta duração (doc §10).
-3. **Revogação de sessão** — JWT vale 12 h e não é revogável fora do `/auth/me`. Adicionar
-   `token_version` no usuário e invalidar tokens antigos em troca de senha / desativação.
-4. **Lockout de conta** — hoje só há limite por IP no login. Bloquear a conta após N falhas.
-5. **Log de auditoria** — registrar login, logout, 401/403 e ações de estorno/reabertura.
-6. **ACL por comprovante** — qualquer usuário autenticado lê qualquer arquivo; restringir ao
-   dono do lançamento se necessário.
-7. **Token no `localStorage`** (front) é roubável por XSS; a CSP no `nginx.spa.conf` mitiga.
-   Migração para cookie `HttpOnly` + CSRF fica como evolução.
+1. ~~TLS no proxy~~ — só necessário numa VPS tradicional com domínio próprio; via Tailscale
+   Funnel o TLS é terminado na borda da Tailscale, nada a fazer aqui. Se um dia for VPS+domínio,
+   copiar `proxy/nginx.tls.conf.example` por cima de `proxy/nginx.conf` e voltar a porta do
+   `proxy` no `docker-compose.yml` para `443:443`/`80:80`.
+2. ~~Comprovantes via URL assinada~~ — feito. `/comprovantes` agora exige `?exp=&sig=` (HMAC,
+   TTL de 5 min, `auth.js#assinarComprovante`/`verificarAssinaturaComprovante`); a URL é obtida
+   via `GET /uploads/comprovante-url?path=...` (autenticado, com ACL — ver item 6).
+3. ~~Revogação de sessão~~ — feito. `usuarios.token_version` (migration `05_seguranca.sql`) no
+   payload do JWT; trocar senha (`/auth/redefinir` e `PUT /usuarios/:id`) incrementa e invalida
+   tokens antigos na hora, sem esperar o `JWT_EXPIRES` (12h).
+4. ~~Lockout de conta~~ — feito. Além do limite por IP, 5 falhas seguidas bloqueiam a conta por
+   15 min (`usuarios.tentativas_login`/`bloqueado_ate`, `routes/auth.js`).
+5. ~~Log de auditoria~~ — feito. Tabela `eventos_auditoria` (migration `05_seguranca.sql`) via
+   `api/src/auditoria.js#registrarEvento`: login, login falho, 401/403 (middleware de erro em
+   `index.js`), estorno de receita/gasto/pagamento, reabertura de dia.
+6. ~~ACL por comprovante~~ — feito. Dono lê qualquer comprovante; Caixa/Gerência só o do
+   lançamento que ele mesmo criou (`routes/uploads.js#/comprovante-url`).
+7. **Token no `localStorage`** (front) é roubável por XSS; a CSP no `nginx.spa.conf` mitiga
+   (ainda com `'unsafe-inline'` em `script-src` — endurecer pra nonce/hash fica como evolução).
+   Migração para cookie `HttpOnly` + CSRF também fica como evolução.
 8. **`bootstrapAdmin`** tem corrida se a API rodar em >1 réplica (não é o caso do compose atual).
+9. **`docker-compose.override.yml`** (dev-only, publica 5432/3000 no host) não pode existir no
+   host que for expor via Funnel — nada no compose impede isso automaticamente, é checklist
+   manual antes do primeiro `docker compose up` ali.
+10. **`trust proxy`** (`index.js`, hoje `1`) assume só o nginx como proxy na frente. Ao ligar o
+    Funnel, testar de fora da rede local que `req.ip`/rate-limit continuam vendo o IP público
+    real do cliente (não o do nó da Tailscale) — ajustar o número se o Funnel adicionar um hop
+    próprio de `X-Forwarded-For`.
+
+**Migração 05 (token_version/lockout/auditoria) num volume de banco já existente:** o
+`docker-entrypoint-initdb.d` só roda em volume novo. Se o Postgres do piloto já tiver dado, aplicar
+manualmente: `docker compose exec -T db psql -U pensador -d pensador < db/migrations/05_seguranca.sql`.

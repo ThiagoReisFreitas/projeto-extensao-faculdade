@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useThemePref } from './theme.js';
 import { comprimir } from './img.js';
+import { useToast } from './toast.jsx';
 
 /* ---- icones inline (traco = currentColor) ---- */
 const Sun = () => (
@@ -71,6 +72,7 @@ export function EmptyState({ children, action }) {
 export function FotoInput({ onChange, label = 'Adicionar foto' }) {
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   const pick = async (e) => {
     const file = e.target.files[0];
@@ -81,6 +83,8 @@ export function FotoInput({ onChange, label = 'Adicionar foto' }) {
       const webp = await comprimir(file);
       setPreview((p) => { if (p) URL.revokeObjectURL(p); return URL.createObjectURL(webp); });
       onChange(webp);
+    } catch {
+      toast('Não consegui processar essa foto. Tente outra.', 'err');
     } finally { setBusy(false); }
   };
 

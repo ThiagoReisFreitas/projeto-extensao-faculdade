@@ -21,7 +21,9 @@ export default function Equipe() {
   const resumo = useList(`/fluxo/folha?de=${p.de}&ate=${p.ate}`, [p.de, p.ate]);
 
   const recarregar = () => { lista.reload(); resumo.reload(); };
-  const semEquipe = !funcionarios.loading && (funcionarios.data || []).filter((x) => x.ativo).length === 0;
+  // erro de rede nao pode virar "ninguem cadastrado" (esconderia o botao de lancar pagamento)
+  const semEquipe = !funcionarios.loading && !funcionarios.err
+    && (funcionarios.data || []).filter((x) => x.ativo).length === 0;
 
   const confirmarEstorno = async (motivo) => {
     try {
@@ -36,6 +38,10 @@ export default function Equipe() {
         <h1>Equipe</h1>
         {!semEquipe && <button className="sec" type="button" onClick={() => setPainel(true)}>+ Pagamento</button>}
       </div>
+
+      {(funcionarios.err || resumo.err) && (
+        <div className="err">Não consegui carregar a equipe: {funcionarios.err || resumo.err}</div>
+      )}
 
       {semEquipe ? (
         <EmptyState action={<Link to="/config">Cadastrar equipe</Link>}>

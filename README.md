@@ -4,12 +4,11 @@ Controle financeiro para restaurante (self-service + churrascaria). Node/Express
 
 ## Subir
 
+O compose exige um `.env` com os segredos (`POSTGRES_PASSWORD`, `DATABASE_URL`,
+`JWT_SECRET`, `ADMIN_SENHA`) — sem ele, `docker compose up` recusa subir:
+
+    cp .env.example .env      # ajuste ADMIN_SENHA e JWT_SECRET (ou use ./ops/gen-env.sh)
     docker compose up -d --build
-
-O compose tem defaults embutidos, entao sobe sem `.env`. Para piloto real, crie o
-`.env` e troque os segredos:
-
-    cp .env.example .env      # ajuste ADMIN_SENHA e JWT_SECRET
 
 Se um boot anterior falhou e deixou o volume do banco sujo, zere antes:
 

@@ -37,4 +37,27 @@ describe('Cadastros', () => {
     const dialog = await screen.findByRole('dialog', { name: /Acesso e perfis/i });
     expect(within(dialog).getByRole('button', { name: /mostrar senha/i })).toBeInTheDocument();
   });
+
+  it('rebaixar o único Dono ativo é bloqueado no cliente, sem chamar a API', async () => {
+    const user = userEvent.setup();
+    const dono = { id: 1, nome: 'Dono', email: 'dono@x.com', perfil: 'dono', ativo: true };
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (String(url).includes('/usuarios') && (!opts?.method || opts.method === 'GET')) return jsonRes([dono]);
+      if (String(url).includes('/usuarios') && opts?.method === 'PUT') {
+        throw new Error('nao deveria chamar a API — o cliente ja devia ter bloqueado');
+      }
+      return jsonRes([]);
+    }));
+
+    renderConfig();
+    const editar = await screen.findByRole('button', { name: 'editar' });
+    await user.click(editar);
+    const dialog = await screen.findByRole('dialog', { name: /Acesso e perfis/i });
+    const combos = within(dialog).getAllByRole('combobox');
+    const perfilSelect = combos.find((el) => Array.from(el.options).some((o) => o.value === 'dono'));
+    await user.selectOptions(perfilSelect, 'caixa');
+    await user.click(within(dialog).getByRole('button', { name: /salvar/i }));
+
+    expect(await within(dialog).findByText(/pelo menos um Dono ativo/i)).toBeInTheDocument();
+  });
 });

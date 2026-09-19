@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { coerceData, coerceValor, montarLinhas, detectarColunas, lerPlanilha } from './importacao.js';
+
+// monta um .xlsx de teste: { 'Aba': [[linha1], [linha2], ...] }
+async function bufXlsx(abas) {
+  const wb = new ExcelJS.Workbook();
+  for (const [nome, linhas] of Object.entries(abas)) {
+    const ws = wb.addWorksheet(nome);
+    linhas.forEach((linha) => ws.addRow(linha));
+  }
+  return wb.xlsx.writeBuffer();
+}
 
 test('coerceData: aceita DD/MM/AAAA, AAAA-MM-DD e US', () => {
   assert.equal(coerceData('05/09/2026', 'br'), '2026-09-05');
@@ -27,24 +37,26 @@ test('coerceValor: numero cru (celula xlsx) passa direto, ignora formato', () =>
   assert.throws(() => coerceValor(NaN, 'br'), /numerico/);
 });
 
-test('lerPlanilha: xlsx -> colunas na ordem, valor como number, data como ISO', () => {
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Data', 'Valor', 'Categoria'],
-    ['2026-09-01', 50, 'Insumos'],
-    ['2026-09-02', 1200, 'Aluguel'],
-  ]);
-  // celula-data de verdade (SheetJS devolve Date) so na 1a linha, coluna A
-  ws.A2 = { t: 'd', v: new Date(Date.UTC(2026, 8, 1)) };
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Gastos');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellDates: true });
+test('lerPlanilha: xlsx -> colunas na ordem, valor como number, data como ISO', async () => {
+  const buf = await bufXlsx({
+    Gastos: [
+      ['Data', 'Valor', 'Categoria'],
+      ['2026-09-01', 50, 'Insumos'],
+      ['2026-09-02', 1200, 'Aluguel'],
+    ],
+  });
+  // celula-data de verdade (exceljs devolve Date) so na 1a linha, coluna A
+  const wb2 = new ExcelJS.Workbook();
+  await wb2.xlsx.load(buf);
+  wb2.getWorksheet('Gastos').getCell('A2').value = new Date(Date.UTC(2026, 8, 1));
+  const bufComData = await wb2.xlsx.writeBuffer();
 
-  const linhas = lerPlanilha(buf, 'gastos.xlsx');
+  const linhas = await lerPlanilha(bufComData, 'gastos.xlsx');
   assert.deepEqual(Object.keys(linhas[0]), ['Data', 'Valor', 'Categoria']);
   assert.equal(linhas[0].Data, '2026-09-01'); // Date -> string ISO
   assert.equal(linhas[0].Valor, 50); // number preservado
 
-  const { colunas, total } = detectarColunas(buf, 'gastos.xlsx');
+  const { colunas, total } = await detectarColunas(bufComData, 'gastos.xlsx');
   assert.deepEqual(colunas, ['Data', 'Valor', 'Categoria']);
   assert.equal(total, 2);
 });
@@ -59,9 +71,9 @@ test('montarLinhas: linhas vindas de xlsx (data ISO + valor number) montam ok', 
   assert.deepEqual(linhas[0], { data: '2026-09-01', valor: 50, categoria_id: 1, descricao: null });
 });
 
-test('detectarColunas: CSV latin1 do Excel pt-BR nao quebra acento', () => {
+test('detectarColunas: CSV latin1 do Excel pt-BR nao quebra acento', async () => {
   const buf = Buffer.from('Data;Valor;Categoria\n01/09/2026;10,00;Manuten\xE7\xE3o\n', 'latin1');
-  const { amostra } = detectarColunas(buf);
+  const { amostra } = await detectarColunas(buf);
   assert.equal(amostra[0].Categoria, 'Manutenção');
 });
 
@@ -114,6 +126,18 @@ test('montarLinhas gastos: data ruim reportada, resto ok', () => {
   assert.equal(linhas.length, 1);
 });
 
+test('montarLinhas gastos: data no futuro vira erro, nao entra sem checar', () => {
+  const amanha = new Date(Date.now() + 2 * 864e5); // +2 dias, margem de fuso
+  const dd = String(amanha.getDate()).padStart(2, '0');
+  const mm = String(amanha.getMonth() + 1).padStart(2, '0');
+  const linhasCsv = [{ d: `${dd}/${mm}/${amanha.getFullYear()}`, v: '10,00', c: 'Insumos' }];
+  const { linhas, erros } = montarLinhas({
+    tipo: 'gastos', linhasCsv, mapa: { data: 'd', valor: 'v', categoria: 'c' }, dicionarios: dic,
+  });
+  assert.equal(linhas.length, 0);
+  assert.match(erros[0].motivo, /futuro/);
+});
+
 test('montarLinhas pagamentos: snapshot do vinculo', () => {
   const { linhas, erros } = montarLinhas({
     tipo: 'pagamentos',
@@ -125,9 +149,9 @@ test('montarLinhas pagamentos: snapshot do vinculo', () => {
   assert.equal(linhas[0].tipo_vinculo_snapshot, 'diarista');
 });
 
-test('detectarColunas: cabecalho + amostra', () => {
+test('detectarColunas: cabecalho + amostra', async () => {
   const csv = 'Data;Valor;Cat\n01/09/2026;10,00;Insumos\n02/09/2026;20,00;Aluguel\n';
-  const { colunas, amostra, total } = detectarColunas(csv);
+  const { colunas, amostra, total } = await detectarColunas(csv);
   assert.deepEqual(colunas, ['Data', 'Valor', 'Cat']);
   assert.equal(total, 2);
   assert.equal(amostra[0].Cat, 'Insumos');
@@ -135,23 +159,23 @@ test('detectarColunas: cabecalho + amostra', () => {
 
 // --- BAGUNCA: tolerancia a planilha mal preenchida ---
 
-test('detectarColunas: pula titulo/linhas vazias antes do cabecalho', () => {
+test('detectarColunas: pula titulo/linhas vazias antes do cabecalho', async () => {
   const csv = 'Controle de Gastos;;\nPreenchido por Maria;;\n;;\nData;Valor;Categoria\n01/09/2026;10,00;Insumos\n';
-  const { colunas, total, cabecalho_linha } = detectarColunas(csv);
+  const { colunas, total, cabecalho_linha } = await detectarColunas(csv);
   assert.deepEqual(colunas, ['Data', 'Valor', 'Categoria']);
   assert.equal(cabecalho_linha, 4);
   assert.equal(total, 1);
 });
 
-test('detectarColunas: opcoes.linha_cabecalho forca a linha', () => {
+test('detectarColunas: opcoes.linha_cabecalho forca a linha', async () => {
   const csv = 'lixo;lixo\nmais lixo;aqui\nData;Valor;Categoria\n01/09/2026;10,00;Insumos\n';
-  const { colunas } = detectarColunas(csv, '', { linha_cabecalho: 3 });
+  const { colunas } = await detectarColunas(csv, '', { linha_cabecalho: 3 });
   assert.deepEqual(colunas, ['Data', 'Valor', 'Categoria']);
 });
 
-test('detectarColunas: ignora coluna de cabecalho vazio', () => {
+test('detectarColunas: ignora coluna de cabecalho vazio', async () => {
   const csv = 'Data; ;Valor;Categoria\n01/09/2026;;10,00;Insumos\n';
-  const { colunas } = detectarColunas(csv);
+  const { colunas } = await detectarColunas(csv);
   assert.deepEqual(colunas, ['Data', 'Valor', 'Categoria']);
 });
 
@@ -203,17 +227,28 @@ test('montarLinhas: categoria aproximada casa e entra em casamentos', () => {
   assert.deepEqual(aprox, ['compras de insumos']);
 });
 
-test('lerMatriz xlsx: opcoes.aba escolhe a aba certa', () => {
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['leia-me']]), 'Instrucoes');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-    ['Data', 'Valor', 'Categoria'], ['2026-09-01', 10, 'Insumos'],
-  ]), 'dados');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+test('montarLinhas: categoria com dois candidatos por inclusao vira erro de ambiguidade, nao casamento silencioso', () => {
+  const linhasCsv = [{ Data: '01/09/2026', Valor: '10,00', Cat: 'Energia' }];
+  const d2 = {
+    ...dic,
+    categorias: [{ id: 1, nome: 'Energia eletrica' }, { id: 2, nome: 'Energia solar' }],
+  };
+  const { linhas, erros } = montarLinhas({
+    tipo: 'gastos', linhasCsv, mapa: { data: 'Data', valor: 'Valor', categoria: 'Cat' }, dicionarios: d2,
+  });
+  assert.equal(linhas.length, 0);
+  assert.match(erros[0].motivo, /ambiguo/);
+});
 
-  const semAba = detectarColunas(buf, 'x.xlsx');
+test('lerMatriz xlsx: opcoes.aba escolhe a aba certa', async () => {
+  const buf = await bufXlsx({
+    Instrucoes: [['leia-me']],
+    dados: [['Data', 'Valor', 'Categoria'], ['2026-09-01', 10, 'Insumos']],
+  });
+
+  const semAba = await detectarColunas(buf, 'x.xlsx');
   assert.deepEqual(semAba.abas, ['Instrucoes', 'dados']);
-  const comAba = detectarColunas(buf, 'x.xlsx', { aba: 'dados' });
+  const comAba = await detectarColunas(buf, 'x.xlsx', { aba: 'dados' });
   assert.deepEqual(comAba.colunas, ['Data', 'Valor', 'Categoria']);
   assert.equal(comAba.total, 1);
 });

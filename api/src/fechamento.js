@@ -2,8 +2,10 @@ import { q } from './db.js';
 import { HttpError } from './http.js';
 
 // bloqueia escrita em dia fechado (RF19 / "sem edicao silenciosa")
-export async function assertDiaAberto(data) {
-  const { rows } = await q(
+// exec opcional: passe client.query (dentro de uma transacao) pra evitar
+// TOCTOU entre o check e o INSERT quando o caller ja abriu BEGIN.
+export async function assertDiaAberto(data, exec = q) {
+  const { rows } = await exec(
     'SELECT reaberto_em FROM fechamentos_diarios WHERE data = $1',
     [data],
   );

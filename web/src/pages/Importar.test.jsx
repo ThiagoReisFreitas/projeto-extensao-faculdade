@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ToastProvider } from '../toast.jsx';
 import Importar from './Importar.jsx';
@@ -26,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const setup = () => render(<ToastProvider><Importar /></ToastProvider>);
+const setup = () => render(<MemoryRouter><ToastProvider><Importar /></ToastProvider></MemoryRouter>);
 
 describe('Importar', () => {
   it('após ler o CSV mostra os campos de mapeamento e trava o import enquanto faltar campo', async () => {
@@ -73,5 +74,36 @@ describe('Importar', () => {
     expect(await screen.findByText(/Tudo certo:/i)).toBeInTheDocument();
     expect(screen.getByText(/Aproximações usadas/i)).toBeInTheDocument();
     expect(screen.getByText(/1 linha\(s\) ignorada/i)).toBeInTheDocument();
+  });
+
+  it('409 de duplicata mostra aviso com botão "Importar mesmo assim", que reenvia e conclui', async () => {
+    const user = userEvent.setup();
+    let chamadas = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      if (String(url).includes('/preview')) {
+        return res({ colunas: ['Quando', 'Quanto', 'Tipo'], amostra: [{ Quando: '01/09/2026', Quanto: '10,00', Tipo: 'Insumos' }], total: 1, abas: [], cabecalho_linha: 1 });
+      }
+      if (String(url).includes('/importacao/gastos') && String(opts?.method).toUpperCase() === 'POST') {
+        chamadas += 1;
+        if (chamadas === 1) {
+          return res({ inseridos: 0, erros: [], ignoradas: [], casamentos: [], duplicatas: ['2026-09-01'], aviso: 'já lançado antes' }, false, 409);
+        }
+        return res({ inseridos: 1, erros: [], ignoradas: [], casamentos: [] }, true, 201);
+      }
+      return res([]);
+    }));
+
+    setup();
+    await user.upload(screen.getByLabelText('Planilha CSV ou Excel'), new File(['x'], 'g.csv', { type: 'text/csv' }));
+    await user.click(screen.getByRole('button', { name: /ler colunas/i }));
+    await escolher(user, /^Data \*/i, 'Quando');
+    await escolher(user, /^Valor \*/i, 'Quanto');
+    await escolher(user, /^Categoria \*/i, 'Tipo');
+
+    await user.click(screen.getByRole('button', { name: /importar 1 linha/i }));
+    expect(await screen.findByText(/já lançado antes/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /importar mesmo assim/i }));
+    expect(await screen.findByRole('button', { name: /ver no livro-caixa/i })).toBeInTheDocument();
   });
 });

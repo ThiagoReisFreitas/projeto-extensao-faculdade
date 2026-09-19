@@ -3,6 +3,7 @@ import { q } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { somenteDono } from '../auth.js';
 import { assertDiaAberto } from '../fechamento.js';
+import { registrarEvento } from '../auditoria.js';
 import { dataNaoFutura } from '../validacao.js';
 
 const r = express.Router();
@@ -54,8 +55,9 @@ r.post('/:id/estorno', somenteDono, ah(async (req, res) => {
     `INSERT INTO pagamentos_funcionarios
        (funcionario_id, data, valor, periodo_referencia, tipo_vinculo_snapshot, usuario_id, estorno_de_id, motivo_estorno)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [o.funcionario_id, o.data, -o.valor, `estorno do pagamento #${o.id}`, o.tipo_vinculo_snapshot, req.user.id, o.id, motivo],
+    [o.funcionario_id, o.data, -o.valor, o.periodo_referencia, o.tipo_vinculo_snapshot, req.user.id, o.id, motivo],
   );
+  await registrarEvento('estorno_pagamento', { usuarioId: req.user.id, detalhe: { pagamento_id: o.id, motivo }, ip: req.ip });
   res.status(201).json(rows[0]);
 }));
 

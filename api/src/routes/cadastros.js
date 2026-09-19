@@ -1,8 +1,8 @@
 import express from 'express';
-import { q } from '../db.js';
+import { q, pool } from '../db.js';
 import { HttpError, ah } from '../http.js';
 import { somenteDono, bcrypt } from '../auth.js';
-import { senhaForte, restariaAlgumDono } from '../validacao.js';
+import { senhaForte, emailValido, restariaAlgumDono } from '../validacao.js';
 
 // CRUD generico p/ tabelas de dimensao simples. table/cols sao controlados
 // pelo codigo (nao entrada do usuario) -> seguro interpolar identificadores.
@@ -73,6 +73,7 @@ export const usuariosRouter = (() => {
   r.post('/', ah(async (req, res) => {
     const { nome, email, senha, perfil } = req.body || {};
     if (!nome || !email || !senha || !perfil) throw new HttpError(400, 'nome, email, senha e perfil obrigatorios');
+    if (!emailValido(email)) throw new HttpError(400, 'email invalido');
     if (!['dono', 'caixa'].includes(perfil)) throw new HttpError(400, 'perfil invalido');
     if (!senhaForte(senha)) throw new HttpError(400, 'senha precisa de pelo menos 8 caracteres');
     const hash = await bcrypt.hash(senha, 10);
@@ -94,28 +95,45 @@ export const usuariosRouter = (() => {
     if (perfil !== undefined && !['dono', 'caixa'].includes(perfil)) throw new HttpError(400, 'perfil invalido');
     if (senha && !senhaForte(senha)) throw new HttpError(400, 'senha precisa de pelo menos 8 caracteres');
 
-    // nao deixa a alteracao zerar os donos ativos (lockout)
-    if (perfil === 'caixa' || ativo === false) {
-      const { rows: us } = await q('SELECT id, perfil, ativo FROM usuarios');
-      if (!restariaAlgumDono(us, { id: req.params.id, perfil, ativo })) {
-        throw new HttpError(409, 'precisa sobrar pelo menos um Dono ativo');
-      }
-    }
-
     const sets = [];
     const vals = [];
     if (nome !== undefined) { vals.push(nome); sets.push(`nome = $${vals.length}`); }
     if (perfil !== undefined) { vals.push(perfil); sets.push(`perfil = $${vals.length}`); }
     if (ativo !== undefined) { vals.push(ativo); sets.push(`ativo = $${vals.length}`); }
-    if (senha) { vals.push(await bcrypt.hash(senha, 10)); sets.push(`senha_hash = $${vals.length}`); }
+    // token_version + 1 revoga sessoes abertas com a senha antiga.
+    if (senha) { vals.push(await bcrypt.hash(senha, 10)); sets.push(`senha_hash = $${vals.length}`); sets.push('token_version = token_version + 1'); }
     if (!sets.length) throw new HttpError(400, 'nada para atualizar');
     vals.push(req.params.id);
-    const { rows } = await q(
-      `UPDATE usuarios SET ${sets.join(',')} WHERE id = $${vals.length}
-       RETURNING id, nome, email, perfil, ativo`, vals,
-    );
-    if (!rows.length) throw new HttpError(404, 'usuario nao encontrado');
-    res.json(rows[0]);
+    const sql = `UPDATE usuarios SET ${sets.join(',')} WHERE id = $${vals.length}
+       RETURNING id, nome, email, perfil, ativo`;
+
+    // alteracao que pode zerar os donos ativos (lockout) -> trava numa transacao,
+    // pra duas requisicoes concorrentes nao passarem as duas no mesmo check.
+    const precisaTravar = perfil === 'caixa' || ativo === false;
+    if (!precisaTravar) {
+      const { rows } = await q(sql, vals);
+      if (!rows.length) throw new HttpError(404, 'usuario nao encontrado');
+      return res.json(rows[0]);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['usuarios_dono_lockout']);
+      const { rows: us } = await client.query('SELECT id, perfil, ativo FROM usuarios');
+      if (!restariaAlgumDono(us, { id: req.params.id, perfil, ativo })) {
+        throw new HttpError(409, 'precisa sobrar pelo menos um Dono ativo');
+      }
+      const { rows } = await client.query(sql, vals);
+      if (!rows.length) throw new HttpError(404, 'usuario nao encontrado');
+      await client.query('COMMIT');
+      res.json(rows[0]);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }));
 
   return r;

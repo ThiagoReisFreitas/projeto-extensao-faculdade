@@ -11,9 +11,11 @@ if (!email || !senhaForte(senha)) {
   process.exit(1);
 }
 
+// nao mexe em `ativo`: isso e so redefinicao de senha (Dono trancado fora), nao
+// reativacao de conta. Se o alvo foi desativado de proposito, continua desativado.
 const hash = await bcrypt.hash(senha, 10);
 const { rowCount, rows } = await pool.query(
-  'UPDATE usuarios SET senha_hash = $1, ativo = true WHERE email = $2 RETURNING id, perfil',
+  'UPDATE usuarios SET senha_hash = $1 WHERE email = $2 RETURNING id, perfil',
   [hash, email],
 );
 console.log(rowCount

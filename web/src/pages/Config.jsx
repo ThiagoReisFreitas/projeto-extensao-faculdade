@@ -8,6 +8,15 @@ import { Selo, tipoTaxaLabel, vinculoLabel, perfilLabel, pct } from '../rotulos.
 const TAXA_AJUDA =
   'Percentual descontado pela operadora nesse tipo de recebimento. Editar aqui não altera taxas já lançadas em receitas antigas, só as futuras.';
 
+// espelha api/src/validacao.js (restariaAlgumDono) — nao da pra importar entre
+// os dois pacotes, mas e so isso: sobraria pelo menos um Dono ativo?
+const restariaAlgumDono = (usuarios, mudanca) => (usuarios || []).some((u) => {
+  const alvo = String(u.id) === String(mudanca.id);
+  const perfil = alvo && mudanca.perfil !== undefined ? mudanca.perfil : u.perfil;
+  const ativo = alvo && mudanca.ativo !== undefined ? mudanca.ativo : u.ativo;
+  return perfil === 'dono' && ativo === true;
+});
+
 // CRUD generico de cadastro. campos: [{k, label, type, options, ajuda,
 //   hideInTable, fmtCell(val), boolLabels:[sim,nao], optionLabel(v)}]
 function Cadastro({ titulo, intro, path, campos, novo, cardView }) {
@@ -21,6 +30,11 @@ function Cadastro({ titulo, intro, path, campos, novo, cardView }) {
   const salvar = async (e) => {
     e.preventDefault();
     setErro('');
+    // aviso antes do POST/PUT em vez de o Dono so descobrir pelo 409 depois
+    if (path === '/usuarios' && edit.id && !restariaAlgumDono(data, edit)) {
+      setErro('Não é possível: precisa sobrar pelo menos um Dono ativo.');
+      return;
+    }
     try {
       if (edit.id) await api.put(`${path}/${edit.id}`, edit);
       else await api.post(path, edit);
@@ -195,15 +209,17 @@ export default function Config() {
           ]} />
         <Cadastro titulo="Acesso e perfis" path="/usuarios"
           intro="Quem pode entrar no sistema. Só o Dono mexe aqui."
-          novo={{ nome: '', email: '', senha: '', perfil: 'caixa' }}
+          novo={{ nome: '', email: '', senha: '', perfil: 'caixa', ativo: true }}
           campos={[
             { k: 'nome', label: 'Nome', ajuda: 'Nome de quem vai usar o sistema, mostrado no topo da tela.' },
-            { k: 'email', label: 'E-mail', ajuda: 'Usado pra login no sistema. Precisa ser único.' },
+            { k: 'email', label: 'E-mail', type: 'email', ajuda: 'Usado pra login no sistema. Precisa ser único.' },
             { k: 'senha', label: 'Senha', type: 'password', hideInTable: true,
               ajuda: 'Ao editar, deixe em branco pra manter a senha atual. Preencha só pra definir uma nova.' },
             { k: 'perfil', label: 'Papel', type: 'select', options: ['dono', 'caixa'],
               optionLabel: perfilLabel, fmtCell: perfilLabel,
               ajuda: 'Dono: acesso total, incluindo Cadastros e reabrir dias fechados. Caixa: lança receitas, gastos e pagamentos, sem mexer em configuração.' },
+            { ...estadoCampo('acesso'), boolLabels: ['Ativo', 'Desativado'],
+              ajuda: 'Desativado: a pessoa é barrada assim que fizer a próxima ação no sistema. O histórico de lançamentos dela continua intacto.' },
           ]} />
       </div>
     </div>

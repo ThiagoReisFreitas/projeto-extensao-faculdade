@@ -3,8 +3,9 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { pool } from './db.js';
 import { HttpError } from './http.js';
+import { registrarEvento } from './auditoria.js';
 import {
-  authObrigatorio, authHeaderOuQuery, bootstrapAdmin, somenteDono, assertConfigSeguranca,
+  authObrigatorio, verificarAssinaturaComprovante, bootstrapAdmin, somenteDono, assertConfigSeguranca,
 } from './auth.js';
 import authRoutes from './routes/auth.js';
 import {
@@ -51,8 +52,9 @@ app.get('/health', async (_req, res) => {
 
 app.use('/auth', authRoutes);
 
-// comprovantes: static do volume de uploads, atras de auth (RNF01 — dado sensivel)
-app.use('/comprovantes', authHeaderOuQuery, express.static('/app/uploads', {
+// comprovantes: static do volume de uploads, atras de URL assinada de curta
+// duracao (RNF01 — dado sensivel; ver auth.js#assinarComprovante)
+app.use('/comprovantes', verificarAssinaturaComprovante, express.static('/app/uploads', {
   fallthrough: false,
   setHeaders(res) {
     res.set('X-Content-Type-Options', 'nosniff');
@@ -78,9 +80,14 @@ app.use('/importacao', limiter(120), somenteDono, importacaoRoutes);
 app.use((_req, res) => res.status(404).json({ error: 'rota nao encontrada' }));
 
 // eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
+app.use((err, req, res, _next) => {
   const status = err instanceof HttpError ? err.status : 500;
   if (status === 500) console.error(err);
+  if (status === 401 || status === 403) {
+    registrarEvento(status === 401 ? 'nao_autenticado' : 'acesso_negado', {
+      usuarioId: req.user?.id, detalhe: { path: req.path, metodo: req.method }, ip: req.ip,
+    });
+  }
   // 500 nao vaza detalhe interno (erro do pg, nome de constraint) pro cliente
   res.status(status).json({ error: status === 500 ? 'erro interno' : (err.message || 'erro') });
 });

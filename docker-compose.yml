@@ -1,9 +1,19 @@
 # Segredos vem SO do .env (${VAR:?...} = compose recusa subir sem eles).
 # Gere o .env com `./ops/gen-env.sh` ou copie de .env.example.
+
+# log sem limite = bot/scanner batendo na porta publica (Funnel) enche o disco
+# e derruba o host. json-file com max-size/max-file limita o total por servico.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     security_opt: [no-new-privileges:true]
+    logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pensador}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
@@ -22,6 +32,7 @@ services:
     build: ./api
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
+    logging: *logging
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -51,6 +62,7 @@ services:
   web:
     build: ./web
     security_opt: [no-new-privileges:true]
+    logging: *logging
     depends_on:
       - api
     restart: unless-stopped
@@ -58,6 +70,7 @@ services:
   proxy:
     image: nginx:alpine
     security_opt: [no-new-privileges:true]
+    logging: *logging
     ports:
       # so localhost: sem TLS, nao expor na LAN. Ver proxy/nginx.tls.conf.example p/ VPS.
       - "127.0.0.1:8080:80"

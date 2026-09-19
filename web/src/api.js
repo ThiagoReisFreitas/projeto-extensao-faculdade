@@ -20,7 +20,13 @@ async function req(method, path, body, isForm) {
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json() : await res.text();
   if (!res.ok) {
-    if (res.status === 401) { setToken(null); location.href = '/login'; }
+    // 401 numa tentativa de login e so senha errada -> deixa o form mostrar o erro,
+    // nao forca reload (isso apagaria o erro exibido e qualquer formulario aberto).
+    if (res.status === 401 && path !== '/auth/login') {
+      setToken(null);
+      sessionStorage.setItem('pensador_sessao_expirada', '1');
+      location.href = '/login';
+    }
     const err = new Error((data && data.error) || `erro ${res.status}`);
     err.status = res.status;
     err.data = data;
@@ -40,6 +46,32 @@ export const api = {
     return req('POST', `/uploads/${tipo}`, fd, true);
   },
 };
+
+// baixa uma rota autenticada que devolve arquivo (ex.: export.csv) — <a href> puro
+// nao manda o Bearer token, entao isso busca com fetch e dispara o download via blob.
+export async function baixarArquivo(path, nomeFallback = 'arquivo') {
+  const tok = getToken();
+  const res = await fetch(`/api${path}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) {
+    if (res.status === 401) {
+      setToken(null);
+      sessionStorage.setItem('pensador_sessao_expirada', '1');
+      location.href = '/login';
+    }
+    throw new Error(`erro ${res.status}`);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') || '';
+  const nome = /filename="?([^"]+)"?/.exec(cd)?.[1] || nomeFallback;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export const brl = (n) =>
   Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });

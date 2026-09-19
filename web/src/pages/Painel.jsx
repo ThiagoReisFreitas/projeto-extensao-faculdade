@@ -3,9 +3,10 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell,
 } from 'recharts';
-import { brl, hoje } from '../api.js';
+import { brl, hoje, baixarArquivo } from '../api.js';
 import { useList } from '../ui.jsx';
 import { useIsDark } from '../theme.js';
+import { useToast } from '../toast.jsx';
 import { Money } from '../money.jsx';
 import { EmptyState } from '../components.jsx';
 
@@ -40,6 +41,7 @@ export default function Painel() {
   const { de, ate } = mesRange(mes);
   const qs = `?de=${de}&ate=${ate}`;
   const t = useTokens();
+  const toast = useToast();
 
   const resumo = useList(`/fluxo/resumo${qs}`, [de, ate]);
   const diario = useList(`/fluxo/diario${qs}`, [de, ate]);
@@ -73,15 +75,22 @@ export default function Painel() {
   );
   const catMax = Math.max(...cats.map((c) => c.valor), 1);
 
-  const vazio = !resumo.loading && !num(r.receita_bruta) && !num(r.gasto) && !num(r.folha);
+  const erro = resumo.err || diario.err || operadora.err || categoria.err;
+  const vazio = !resumo.loading && !erro && !num(r.receita_bruta) && !num(r.gasto) && !num(r.folha);
 
   return (
     <div className="page painel">
       <div className="lc-top">
         <h1>Painel</h1>
-        <a href={`/api/fluxo/export.csv${qs}`}><button className="sec" type="button">Exportar CSV</button></a>
+        <button
+          className="sec"
+          type="button"
+          onClick={() => baixarArquivo(`/fluxo/export.csv${qs}`, 'fluxo.csv').catch((e) => toast(e.message, 'err'))}
+        >Exportar CSV</button>
       </div>
       <p className="page-intro">Visão analítica de {nomeMes(mes)}. Os números são calculados no servidor; aqui só se plota.</p>
+
+      {erro && <div className="err">Não consegui carregar o painel: {erro}</div>}
 
       <div className="card lc-controles">
         <div className="lc-periodo">

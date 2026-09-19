@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api, brl, hoje } from '../api.js';
+import { api, brl, hoje, baixarArquivo } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { useList } from '../ui.jsx';
 import { useToast } from '../toast.jsx';
@@ -180,8 +180,18 @@ export default function LivroCaixa() {
     <div className="page">
       <div className="lc-top">
         <h1>Livro-caixa</h1>
-        <a href={`/api/fluxo/export.csv${qs}`}><button className="sec" type="button">Exportar CSV</button></a>
+        <button
+          className="sec"
+          type="button"
+          onClick={() => baixarArquivo(`/fluxo/export.csv${qs}`, 'fluxo.csv').catch((e) => toast(e.message, 'err'))}
+        >Exportar CSV</button>
       </div>
+
+      {(receitas.err || gastos.err || pagamentos.err || fechamentos.err) && (
+        <div className="err">
+          Não consegui carregar todos os dados do período: {receitas.err || gastos.err || pagamentos.err || fechamentos.err}
+        </div>
+      )}
 
       <div className="card lc-controles">
         <div className="lc-periodo">

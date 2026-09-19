@@ -27,27 +27,73 @@ const parseOpcoes = (raw) => {
 };
 
 // passo 1: le a planilha e devolve colunas + amostra + abas + linha do cabecalho.
+const LIMITE_LINHAS = 5000;
+
 r.post('/:tipo/preview', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
   if (!req.file) throw new HttpError(400, 'arquivo obrigatorio (campo "arquivo")');
   const opcoes = parseOpcoes(req.body.opcoes);
+  let resultado;
   try {
-    res.json(detectarColunas(req.file.buffer, req.file.originalname, opcoes));
+    resultado = await detectarColunas(req.file.buffer, req.file.originalname, opcoes);
   } catch (e) {
     throw new HttpError(400, `nao consegui ler a planilha: ${e.message}`);
   }
+  // mesmo limite do passo de import — avisa antes do usuario investir tempo mapeando.
+  if (resultado.total > LIMITE_LINHAS) {
+    throw new HttpError(413, `planilha muito grande (${resultado.total} linhas) — divida em blocos de ate ${LIMITE_LINHAS} linhas`);
+  }
+  res.json(resultado);
 }));
 
+// so entidades ativas -> mesma regra do lancamento manual (routes/receitas.js,
+// carregarFormaOperadora), senao o import consegue lancar contra uma operadora/
+// forma ja desativada, coisa que o form manual bloqueia.
 async function carregarDicionarios() {
   const [cat, forma, op, fn] = await Promise.all([
-    q('SELECT id, nome FROM categorias_gasto'),
-    q('SELECT id, nome, requer_operadora, tipo_taxa FROM formas_pagamento'),
-    q('SELECT id, nome, taxa_debito, taxa_credito_vista, taxa_credito_parcelado FROM operadoras_cartao'),
-    q('SELECT id, nome, tipo_vinculo FROM funcionarios'),
+    q('SELECT id, nome FROM categorias_gasto WHERE ativo = true'),
+    q('SELECT id, nome, requer_operadora, tipo_taxa FROM formas_pagamento WHERE ativo = true'),
+    q('SELECT id, nome, taxa_debito, taxa_credito_vista, taxa_credito_parcelado FROM operadoras_cartao WHERE ativo = true'),
+    q('SELECT id, nome, tipo_vinculo FROM funcionarios WHERE ativo = true'),
   ]);
   return { categorias: cat.rows, formas: forma.rows, operadoras: op.rows, funcionarios: fn.rows };
 }
 
 const DEFAULT_KEY = { forma_pagamento: 'forma_default_id', categoria: 'categoria_default_id', funcionario: 'funcionario_default_id' };
+
+// mesma (data, valor, chave-de-negocio) ja lancada -> provavel reimportacao do mesmo arquivo.
+// so olha as datas presentes no lote, pra nao varrer a tabela inteira.
+async function acharDuplicatas(tipo, linhas) {
+  const datas = [...new Set(linhas.map((l) => l.data))];
+  if (!datas.length) return [];
+  const dataStr = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
+  if (tipo === 'receitas') {
+    const { rows } = await q(
+      'SELECT data, valor_bruto, forma_pagamento_id, operadora_id FROM receitas WHERE data = ANY($1) AND estorno_de_id IS NULL',
+      [datas],
+    );
+    return linhas.filter((l) => rows.some((e) => dataStr(e.data) === l.data
+      && Number(e.valor_bruto) === l.valor_bruto
+      && e.forma_pagamento_id === l.forma_pagamento_id
+      && (e.operadora_id || null) === (l.operadora_id || null)));
+  }
+  if (tipo === 'gastos') {
+    const { rows } = await q(
+      'SELECT data, valor, categoria_id FROM gastos WHERE data = ANY($1) AND estorno_de_id IS NULL',
+      [datas],
+    );
+    return linhas.filter((l) => rows.some((e) => dataStr(e.data) === l.data
+      && Number(e.valor) === l.valor
+      && e.categoria_id === l.categoria_id));
+  }
+  const { rows } = await q(
+    'SELECT data, valor, funcionario_id, periodo_referencia FROM pagamentos_funcionarios WHERE data = ANY($1) AND estorno_de_id IS NULL',
+    [datas],
+  );
+  return linhas.filter((l) => rows.some((e) => dataStr(e.data) === l.data
+    && Number(e.valor) === l.valor
+    && e.funcionario_id === l.funcionario_id
+    && (e.periodo_referencia || null) === (l.periodo_referencia || null)));
+}
 
 // passo 2: valida tudo e, se nao houver erro nenhum, insere em transacao (tudo ou nada).
 r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
@@ -59,16 +105,27 @@ r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
   catch { throw new HttpError(400, 'mapa invalido (esperado JSON)'); }
   const opcoes = parseOpcoes(req.body.opcoes);
 
+  // dois campos apontando pra mesma coluna de origem = provavel erro de mapeamento
+  // (silencioso pra campos de texto livre, sem isso).
+  const colunaDoCampo = {};
+  for (const [campo, coluna] of Object.entries(mapa)) {
+    if (!coluna) continue;
+    if (colunaDoCampo[coluna]) {
+      throw new HttpError(400, `"${colunaDoCampo[coluna]}" e "${campo}" nao podem apontar pra mesma coluna ("${coluna}")`);
+    }
+    colunaDoCampo[coluna] = campo;
+  }
+
   for (const campo of CAMPOS[tipo].obrigatorios) {
     const temDefault = DEFAULT_KEY[campo] && opcoes[DEFAULT_KEY[campo]];
     if (!mapa[campo] && !temDefault) throw new HttpError(400, `mapeie uma coluna para "${campo}"`);
   }
 
   let linhasCsv;
-  try { linhasCsv = lerPlanilha(req.file.buffer, req.file.originalname, opcoes); }
+  try { linhasCsv = await lerPlanilha(req.file.buffer, req.file.originalname, opcoes); }
   catch (e) { throw new HttpError(400, `nao consegui ler a planilha: ${e.message}`); }
   if (!linhasCsv.length) throw new HttpError(400, 'planilha sem linhas de dados');
-  if (linhasCsv.length > 5000) throw new HttpError(413, 'planilha muito grande — divida em blocos de ate 5000 linhas');
+  if (linhasCsv.length > LIMITE_LINHAS) throw new HttpError(413, `planilha muito grande — divida em blocos de ate ${LIMITE_LINHAS} linhas`);
 
   const dicionarios = await carregarDicionarios();
   const { linhas, erros, ignoradas, casamentos } = montarLinhas({ tipo, linhasCsv, mapa, opcoes, dicionarios });
@@ -80,12 +137,22 @@ r.post('/:tipo', validaTipo, upload.single('arquivo'), ah(async (req, res) => {
 
   if (erros.length) return res.status(422).json({ inseridos: 0, erros, ignoradas, casamentos });
 
-  // um check de dia-fechado por data distinta (nao por linha)
-  for (const dia of new Set(linhas.map((l) => l.data))) await assertDiaAberto(dia);
+  const duplicatas = await acharDuplicatas(tipo, linhas);
+  if (duplicatas.length && !opcoes.permitir_duplicados) {
+    return res.status(409).json({
+      inseridos: 0, erros: [], ignoradas, casamentos,
+      duplicatas: duplicatas.map((l) => l.data),
+      aviso: `${duplicatas.length} linha(s) parecem ja lancadas antes (mesma data/valor). Reenvie com "opcoes.permitir_duplicados" se for intencional.`,
+    });
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // re-checa dia-fechado dentro da transacao (evita corrida com um fechamento concorrente)
+    for (const dia of new Set(linhas.map((l) => l.data))) {
+      await assertDiaAberto(dia, (text, params) => client.query(text, params));
+    }
     for (const l of linhas) {
       if (tipo === 'receitas') {
         const forma = dicionarios.formas.find((f) => f.id === l.forma_pagamento_id);

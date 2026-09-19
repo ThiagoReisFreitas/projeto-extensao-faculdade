@@ -3,9 +3,7 @@ import { api, brl } from '../api.js';
 import { useList } from '../ui.jsx';
 import { useToast } from '../toast.jsx';
 import { Modal } from '../components.jsx';
-import { Money } from '../money.jsx';
-
-const n = (v) => Number(String(v).replace(',', '.')) || 0;
+import { Money, parseBRL } from '../money.jsx';
 
 // Modal de conferencia. data = 'YYYY-MM-DD'. onFechado() ao concluir.
 export function FechamentoModal({ data, onClose, onFechado }) {
@@ -16,6 +14,7 @@ export function FechamentoModal({ data, onClose, onFechado }) {
   const categorias = useList('/categorias', []);
   const [conferido, setConferido] = useState({});
   const [busy, setBusy] = useState(false);
+  const [erroFechar, setErroFechar] = useState('');
 
   const grupos = useMemo(() => {
     const naoCartao = new Map();
@@ -29,7 +28,7 @@ export function FechamentoModal({ data, onClose, onFechado }) {
     return arr;
   }, [receitas.data]);
 
-  const valConf = (g) => (conferido[g.label] === undefined ? g.sistema : n(conferido[g.label]));
+  const valConf = (g) => (conferido[g.label] === undefined ? g.sistema : parseBRL(conferido[g.label]));
   const difTotal = grupos.reduce((s, g) => s + (valConf(g) - g.sistema), 0);
   const temDif = Math.abs(difTotal) >= 0.005;
 
@@ -53,10 +52,11 @@ export function FechamentoModal({ data, onClose, onFechado }) {
 
   async function fechar({ comQuebra } = {}) {
     setBusy(true);
+    setErroFechar('');
     try {
       if (comQuebra && difTotal < 0) {
         const cat = (categorias.data || []).find((c) => c.nome === 'Quebra de caixa');
-        if (!cat) throw new Error('categoria "Quebra de caixa" não encontrada nos cadastros');
+        if (!cat) throw new Error('Categoria "Quebra de caixa" não encontrada (ou desativada) nos cadastros. Peça ao Dono para cadastrá-la em Cadastros › Categorias, ou feche sem registrar a quebra.');
         await api.post('/gastos', {
           data, valor: Math.abs(difTotal), categoria_id: cat.id,
           descricao: `Quebra de caixa · conferência ${data.slice(8, 10)}/${data.slice(5, 7)}`,
@@ -65,7 +65,7 @@ export function FechamentoModal({ data, onClose, onFechado }) {
       await api.post('/fechamentos', { data, conferencia: conferenciaPayload() });
       toast('Dia fechado');
       onFechado();
-    } catch (e) { toast(e.message, 'err'); setBusy(false); }
+    } catch (e) { setErroFechar(e.message); toast(e.message, 'err'); setBusy(false); }
   }
 
   return (
@@ -140,6 +140,8 @@ export function FechamentoModal({ data, onClose, onFechado }) {
         <ul className="fech-sanidade">
           <li>{lancs} lançamento{lancs === 1 ? '' : 's'} · {semComprovante} sem comprovante</li>
         </ul>
+
+        {erroFechar && <div className="err">{erroFechar}</div>}
 
         <div className="fech-acoes">
           {temDif && difTotal < 0 && (

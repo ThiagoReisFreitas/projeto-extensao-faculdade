@@ -4,6 +4,7 @@ import { HttpError, ah } from '../http.js';
 import { somenteDono } from '../auth.js';
 import { calcTaxa } from '../taxa.js';
 import { assertDiaAberto } from '../fechamento.js';
+import { registrarEvento } from '../auditoria.js';
 import { dataNaoFutura, comprovantePathValido } from '../validacao.js';
 
 const r = express.Router();
@@ -55,7 +56,10 @@ r.post('/', ah(async (req, res) => {
   res.status(201).json(rows[0]);
 }));
 
-// edicao: so Dono (doc 8.1). Recalcula taxa (fato re-registrado no ato da correcao).
+// edicao: so Dono (doc 8.1). Fato imutavel: so recalcula taxa se algo que
+// influencia o calculo (valor_bruto/forma/operadora) de fato mudou — editar
+// so a observacao/data nao pode reescrever valor_taxa/valor_liquido com a
+// config atual (a taxa da operadora pode ter mudado desde o lancamento).
 r.put('/:id', somenteDono, ah(async (req, res) => {
   const { rows: cur } = await q('SELECT * FROM receitas WHERE id = $1', [req.params.id]);
   if (!cur.length) throw new HttpError(404, 'receita nao encontrada');
@@ -64,12 +68,24 @@ r.put('/:id', somenteDono, ah(async (req, res) => {
   const b = { ...cur[0], ...req.body };
   await assertDiaAberto(cur[0].data);
   await assertDiaAberto(b.data);
-  const { forma, operadora } = await carregarFormaOperadora(b.forma_pagamento_id, b.operadora_id);
-  const { valorTaxa, valorLiquido } = calcTaxa({ valorBruto: b.valor_bruto, forma, operadora });
+
+  const mudouTaxa = Number(b.valor_bruto) !== Number(cur[0].valor_bruto)
+    || String(b.forma_pagamento_id) !== String(cur[0].forma_pagamento_id)
+    || String(b.operadora_id || '') !== String(cur[0].operadora_id || '');
+
+  let valorTaxa = cur[0].valor_taxa;
+  let valorLiquido = cur[0].valor_liquido;
+  let operadoraId = cur[0].operadora_id;
+  if (mudouTaxa) {
+    const { forma, operadora } = await carregarFormaOperadora(b.forma_pagamento_id, b.operadora_id);
+    ({ valorTaxa, valorLiquido } = calcTaxa({ valorBruto: b.valor_bruto, forma, operadora }));
+    operadoraId = operadora?.id || null;
+  }
+
   const { rows } = await q(
     `UPDATE receitas SET data=$1, valor_bruto=$2, forma_pagamento_id=$3, operadora_id=$4,
        valor_taxa=$5, valor_liquido=$6, observacao=$7 WHERE id=$8 RETURNING *`,
-    [b.data, b.valor_bruto, b.forma_pagamento_id, operadora?.id || null, valorTaxa, valorLiquido, b.observacao || null, req.params.id],
+    [b.data, b.valor_bruto, b.forma_pagamento_id, operadoraId, valorTaxa, valorLiquido, b.observacao || null, req.params.id],
   );
   res.json(rows[0]);
 }));
@@ -91,6 +107,7 @@ r.post('/:id/estorno', somenteDono, ah(async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [o.data, -o.valor_bruto, o.forma_pagamento_id, o.operadora_id, -o.valor_taxa, -o.valor_liquido, req.user.id, o.id, motivo, `estorno da receita #${o.id}`],
   );
+  await registrarEvento('estorno_receita', { usuarioId: req.user.id, detalhe: { receita_id: o.id, motivo }, ip: req.ip });
   res.status(201).json(rows[0]);
 }));
 

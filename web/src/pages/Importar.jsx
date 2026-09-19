@@ -150,13 +150,16 @@ export default function Importar() {
   );
 
   // simular=true -> só valida e devolve diagnóstico; senão importa (grava no banco).
-  const enviar = async (simular) => {
+  // forcarDuplicados=true -> reenvia mesmo depois do aviso de prováveis duplicatas.
+  const enviar = async (simular, forcarDuplicados) => {
     setBusy(true); setResultado(null);
     try {
       const fd = new FormData();
       fd.append('arquivo', file, file.name);
       fd.append('mapa', JSON.stringify(mapa));
-      fd.append('opcoes', JSON.stringify({ ...opcoes, simular: simular || undefined }));
+      fd.append('opcoes', JSON.stringify({
+        ...opcoes, simular: simular || undefined, permitir_duplicados: forcarDuplicados || undefined,
+      }));
       const res = await api.postForm(`/importacao/${tipo}`, fd);
       setResultado(res);
       if (res.simulado) {
@@ -172,7 +175,7 @@ export default function Importar() {
   };
 
   const mostrarResultado = resultado
-    && (resultado.simulado || resultado.inseridos > 0 || (resultado.erros && resultado.erros.length));
+    && (resultado.simulado || resultado.inseridos > 0 || resultado.erros?.length || resultado.duplicatas?.length);
 
   return (
     <div className="page">
@@ -364,8 +367,17 @@ export default function Importar() {
                 : `Tudo certo: ${resultado.ok} linha(s) prontas. Nada foi gravado ainda — clique em "Importar" para salvar.`}
             </p>
           )}
-          {!resultado.simulado && !concluido && (
-            <p className="err">Nada foi importado — {resultado.erros.length} linha(s) com problema:</p>
+          {resultado.duplicatas?.length > 0 && !concluido && (
+            <div className="imp-duplicatas">
+              <p className="err">{resultado.aviso}</p>
+              <button type="button" className="ghost" disabled={busy} onClick={() => enviar(false, true)}>
+                {busy ? 'importando…' : 'Importar mesmo assim'}
+              </button>
+            </div>
+          )}
+
+          {!resultado.simulado && !concluido && !resultado.duplicatas?.length && (
+            <p className="err">Nada foi importado — {resultado.erros?.length ?? 0} linha(s) com problema:</p>
           )}
 
           {resultado.erros?.length > 0 && (
