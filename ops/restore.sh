@@ -12,7 +12,7 @@ DB_DUMP=$1
 UP_TAR=$2
 PGUSER=${POSTGRES_USER:-pensador}
 PGDB=${POSTGRES_DB:-pensador}
-UPLOADS_VOLUME=${UPLOADS_VOLUME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')_uploads_data}
+UPLOADS_VOLUME=${UPLOADS_VOLUME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_uploads_data}
 
 docker volume inspect "$UPLOADS_VOLUME" >/dev/null 2>&1 || {
   echo "erro: volume '$UPLOADS_VOLUME' nao existe (defina UPLOADS_VOLUME no .env se o nome do projeto compose for outro)" >&2

@@ -166,13 +166,14 @@ export default function Config() {
       </p>
       <div className="cfg">
         <Cadastro titulo="Maquininhas" path="/operadoras" cardView
-          intro="As taxas daqui são descontadas automaticamente de cada venda no cartão."
-          novo={{ nome: '', taxa_debito: 0, taxa_credito_vista: 0, taxa_credito_parcelado: 0, ativo: true }}
+          intro="As taxas daqui são descontadas automaticamente de cada venda no cartão ou no vale."
+          novo={{ nome: '', taxa_debito: 0, taxa_credito_vista: 0, taxa_credito_parcelado: 0, taxa_vale: 0, ativo: true }}
           campos={[
             { k: 'nome', label: 'Nome', ajuda: 'Nome da maquininha ou adquirente, como aparece no seu extrato. Ex: Stone, Cielo, Rede.' },
             { k: 'taxa_debito', label: 'Débito', type: 'number', fmtCell: pct, ajuda: TAXA_AJUDA },
             { k: 'taxa_credito_vista', label: 'Crédito à vista', type: 'number', fmtCell: pct, ajuda: TAXA_AJUDA },
             { k: 'taxa_credito_parcelado', label: 'Crédito parcelado', type: 'number', fmtCell: pct, ajuda: TAXA_AJUDA },
+            { k: 'taxa_vale', label: 'Vale (VR/VA)', type: 'number', fmtCell: pct, ajuda: TAXA_AJUDA },
             estadoCampo('lançamento'),
           ]} />
         <Cadastro titulo="Formas de pagamento" path="/formas-pagamento"
@@ -181,9 +182,9 @@ export default function Config() {
           campos={[
             { k: 'nome', label: 'Nome', ajuda: 'Como aparece na tela de lançar receita. Ex: Dinheiro, PIX, Débito.' },
             { k: 'tipo_taxa', label: 'Taxa aplicada', type: 'select',
-              options: ['nenhuma', 'debito', 'credito_vista', 'credito_parcelado'],
+              options: ['nenhuma', 'debito', 'credito_vista', 'credito_parcelado', 'vale'],
               optionLabel: tipoTaxaLabel, fmtCell: tipoTaxaLabel,
-              ajuda: 'Qual taxa da maquininha se aplica a essa forma de pagamento. "Sem taxa" para dinheiro, PIX e vale.' },
+              ajuda: 'Qual taxa da maquininha se aplica a essa forma de pagamento. "Sem taxa" para dinheiro e PIX. Vale-refeição/alimentação: escolha "Vale (VR/VA)" e ligue "Pede maquininha ao lançar".' },
             { k: 'requer_operadora', label: 'Pede maquininha ao lançar', type: 'bool', hideInTable: true,
               ajuda: 'Ligue para formas em cartão (débito, crédito): o formulário passa a pedir qual maquininha processou. Desligue para dinheiro, PIX, etc.' },
             estadoCampo('lançamento'),

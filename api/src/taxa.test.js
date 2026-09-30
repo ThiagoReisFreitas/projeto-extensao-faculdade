@@ -29,3 +29,13 @@ test('forma exige operadora e nao veio: erro 400', () => {
 test('valor invalido: erro 400', () => {
   assert.throws(() => calcTaxa({ valorBruto: 0, forma: { requer_operadora: false, tipo_taxa: 'nenhuma' } }));
 });
+
+test('vale refeicao usa taxa_vale da operadora', () => {
+  const r = calcTaxa({
+    valorBruto: 100,
+    forma: { requer_operadora: true, tipo_taxa: 'vale' },
+    operadora: { taxa_debito: 1.3, taxa_vale: 6.5 },
+  });
+  assert.equal(r.valorTaxa, 6.5);
+  assert.equal(r.valorLiquido, 93.5);
+});

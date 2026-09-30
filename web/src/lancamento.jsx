@@ -19,9 +19,9 @@ const hojeLabel = () => {
   const d = new Date();
   return `hoje · ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
-const TAXA_CURTA = { debito: 'débito', credito_vista: 'crédito à vista', credito_parcelado: 'crédito parcelado' };
+const TAXA_CURTA = { debito: 'débito', credito_vista: 'crédito à vista', credito_parcelado: 'crédito parcelado', vale: 'vale' };
 const pctForma = (forma, op) => {
-  const p = { debito: op.taxa_debito, credito_vista: op.taxa_credito_vista, credito_parcelado: op.taxa_credito_parcelado }[forma.tipo_taxa];
+  const p = { debito: op.taxa_debito, credito_vista: op.taxa_credito_vista, credito_parcelado: op.taxa_credito_parcelado, vale: op.taxa_vale }[forma.tipo_taxa];
   return `${Number(p || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}%`;
 };
 

@@ -18,6 +18,7 @@ export function calcTaxa({ valorBruto, forma, operadora }) {
     debito: operadora.taxa_debito,
     credito_vista: operadora.taxa_credito_vista,
     credito_parcelado: operadora.taxa_credito_parcelado,
+    vale: operadora.taxa_vale,
   }[forma.tipo_taxa];
 
   const valorTaxa = round2(bruto * Number(pct) / 100);

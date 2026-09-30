@@ -5,6 +5,7 @@ export const TIPO_TAXA = {
   debito: 'Débito',
   credito_vista: 'Crédito à vista',
   credito_parcelado: 'Crédito parcelado',
+  vale: 'Vale (VR/VA)',
 };
 export const tipoTaxaLabel = (v) => TIPO_TAXA[v] ?? v;
 

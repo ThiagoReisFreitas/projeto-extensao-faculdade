@@ -12,7 +12,7 @@ OUT=${BACKUP_DIR:-./backups}
 KEEP_DAYS=${KEEP_DAYS:-21}
 PGUSER=${POSTGRES_USER:-pensador}
 PGDB=${POSTGRES_DB:-pensador}
-UPLOADS_VOLUME=${UPLOADS_VOLUME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')_uploads_data}
+UPLOADS_VOLUME=${UPLOADS_VOLUME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_uploads_data}
 STAMP=$(date +%Y%m%d-%H%M%S)
 
 # RCLONE_REMOTE manda o backup pra fora da maquina (nuvem de terceiro) — sem
@@ -34,6 +34,12 @@ docker volume inspect "$UPLOADS_VOLUME" >/dev/null 2>&1 || {
 
 DB_FILE="$OUT/db-$STAMP.sql.gz"
 docker compose exec -T db pg_dump -U "$PGUSER" -d "$PGDB" --clean --if-exists | gzip > "$DB_FILE"
+# sh nao tem pipefail: se o pg_dump falhar, o gzip ainda gera um arquivo "valido".
+# pg_dump so escreve essa linha no fim de um dump completo.
+gunzip -c "$DB_FILE" | grep -q 'PostgreSQL database dump complete' || {
+  echo "erro: dump do banco incompleto ($DB_FILE)" >&2
+  exit 1
+}
 
 # cifra o dump se BACKUP_GPG_RECIPIENT estiver setado (recomendado p/ copia externa)
 if [ -n "${BACKUP_GPG_RECIPIENT:-}" ]; then

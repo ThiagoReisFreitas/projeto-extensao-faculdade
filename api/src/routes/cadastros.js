@@ -42,7 +42,7 @@ function crudRouter({ table, cols }) {
 
 export const operadorasRouter = crudRouter({
   table: 'operadoras_cartao',
-  cols: ['nome', 'taxa_debito', 'taxa_credito_vista', 'taxa_credito_parcelado', 'ativo'],
+  cols: ['nome', 'taxa_debito', 'taxa_credito_vista', 'taxa_credito_parcelado', 'taxa_vale', 'ativo'],
 });
 
 export const formasPagamentoRouter = crudRouter({
